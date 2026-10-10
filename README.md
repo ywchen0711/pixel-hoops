@@ -13,6 +13,11 @@ simulated possession by possession and animated on a pixel court — like the [p
   and foul trouble and keep their best players in during close finishes
 - **The four super players** — Josh Chen, Jasper Chen, Jeff Chen, Erin Lai — are in every game, each placed on a random
   team and a random starting position, with ratings around 92–99 (marked ★)
+- **A playbook**: every possession runs a real set chosen to fit the shot it ends in — pick & roll, pick & pop,
+  isolation, post-up, drive & kick, give & go, backdoor cut, Floppy, Elevator Doors, hand-off, Horns, Spain pick & roll,
+  motion offense, alley-oop, fast breaks and second chances. Players run the routes on the court (defenders get hung up
+  on screens), the set's name shows on the court, and a coach's diagram beside it draws the cuts, passes and screens
+- **HD-2D arena**: a lit 3D diorama with a cheering crowd, benches, glass backboards and a hanging scoreboard
 - Scoreboard with game and shot clocks, line score, team fouls and bonus; play-by-play; full box score
   (MIN PTS REB AST STL BLK FG 3P FT TO PF +/-); ratings for both rosters; speed 1x–30x or sim to the end
 - Records and season stats carry over between games (saved in your browser); Chinese and English
