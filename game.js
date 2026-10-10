@@ -10,7 +10,7 @@ const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const TX = {
   zh: {
     title: '像素籃球', subtitle: 'NBA 規則的全自動籃球模擬', speed: '速度', play: '▶ 開始比賽', pause: '⏸ 暫停', resume: '▶ 繼續',
-    sim: '⏭ 直接模擬到結束', next: '下一場 ▶', newTeams: '🔄 重新組隊', lang: 'English',
+    sim: '⏭ 直接模擬到結束', next: '下一場 ▶', newTeams: '🔄 重新組隊', lang: 'English', fx: on => '✨ HD-2D 特效：' + (on ? '開' : '關'),
     tabLog: '文字轉播', tabBox: '比賽數據', tabRoster: '球員名單',
     help: '每隊 5 人上場、13 人名單；四節各 12 分鐘、24 秒進攻時限（搶到進攻籃板重設為 14 秒），平手延長 5 分鐘。個人 6 犯畢業，單節團隊第 5 次犯規起進入加罰。球員會累，教練依體力和犯規換人。★ 是一定會出現的四位超級球員 Josh Chen、Jasper Chen、Jeff Chen、Erin Lai，每場隨機分到兩隊的不同位置。',
     period: n => n <= 4 ? '第 ' + n + ' 節' : (n === 5 ? '延長賽' : '第 ' + (n - 4) + ' 次延長'), final: '比賽結束', fouls: '團隊犯規', bonus: '加罰',
@@ -36,7 +36,7 @@ const TX = {
   },
   en: {
     title: 'Pixel Hoops', subtitle: 'an automatic basketball sim with NBA rules', speed: 'Speed', play: '▶ Tip off', pause: '⏸ Pause', resume: '▶ Resume',
-    sim: '⏭ Sim to the end', next: 'Next game ▶', newTeams: '🔄 New teams', lang: '中文',
+    sim: '⏭ Sim to the end', next: 'Next game ▶', newTeams: '🔄 New teams', lang: '中文', fx: on => '✨ HD-2D FX: ' + (on ? 'on' : 'off'),
     tabLog: 'Play-by-play', tabBox: 'Box score', tabRoster: 'Rosters',
     help: '5 players on the court, 13 on the roster; four 12-minute quarters, a 24-second shot clock (reset to 14 after an offensive rebound), 5-minute overtimes when tied. Players foul out at 6, and a team is in the bonus from its 5th foul of a quarter. Players get tired and coaches substitute for fatigue and foul trouble. ★ marks the four super players who are always in the game — Josh Chen, Jasper Chen, Jeff Chen and Erin Lai — placed on random teams and positions each match.',
     period: n => n <= 4 ? 'Q' + n : (n === 5 ? 'OT' : (n - 4) + 'OT'), final: 'Final', fouls: 'Team fouls', bonus: 'BONUS',
@@ -105,57 +105,232 @@ function setPlaying(on) {
   $('play').disabled = !!(game && game.over);
 }
 
-// ---------------- the court ----------------
+// ---------------- the court: an HD-2D arena — a lit 3D diorama with pixel-sprite players ----------------
 const cv = $('court'), g = cv.getContext('2d');
-const S = 4;
-const PZ = 0.75;                         // sprite pixel = PZ logical px (3 device px) — big chibi players                              // device pixels per logical pixel (sprites use half pixels: 2 device pixels each)
-const W = 320, H = 176, FT = 3.2, OX = 9.6, OY = 8;   // logical size; feet → logical pixels
-const px = x => OX + x * FT, py = y => OY + y * FT;
+const S = 4;                              // device pixels per logical pixel
+const PZ = 0.75;                          // sprite pixel = PZ logical px (3 device px) — big chibi players
+const W = 320, H = 200;                   // logical size
+const RIM = 13;                           // rim height in feet (raised to suit the big-headed players)
+// the camera hangs high above the near sideline, tilted 50° down
+const CAM = { th: 50 * Math.PI / 180, h: 90, back: 40, foc: 290, cx: 160, cy: 100 };
+const CC = Math.cos(CAM.th), CS = Math.sin(CAM.th);
+function P(x, y, z) {                     // court feet (x 0–94 along, y 0 far sideline – 50 near, z up) → logical px; s = px per foot there
+  const rF = 50 - y + CAM.back, rZ = (z || 0) - CAM.h, d = rF * CC - rZ * CS, up = rF * CS + rZ * CC;
+  return { x: CAM.cx + CAM.foc * (x - 47) / d, y: CAM.cy - CAM.foc * up / d, s: CAM.foc / d };
+}
+function floorY(Y) {                      // a screen row → the court y (feet) of the floor seen there
+  const q = (CAM.cy - Y) / CAM.foc;
+  return 50 + CAM.back + CAM.h * (CC + q * CS) / (q * CC - CS);
+}
 g.imageSmoothingEnabled = false;
+const canFilter = typeof g.filter === 'string';
+let fxOn = canFilter;
+try { if (localStorage.getItem('hoops.fx') === 'off') fxOn = false; } catch (e) { /* ignore */ }
+function rng(seed) { return () => (seed = (seed * 16807) % 2147483647) / 2147483647; }
+function poly(pts, fill, stroke, lw) {
+  g.beginPath(); pts.forEach((q, i) => i ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y)); g.closePath();
+  if (fill) { g.fillStyle = fill; g.fill(); }
+  if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw || 0.5; g.stroke(); }
+}
+function seg(a, b, col, lw) { g.strokeStyle = col; g.lineWidth = lw; g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); }
 
-let floorImg = null;
-function floor() {
-  if (floorImg) return floorImg;
-  const c = document.createElement('canvas'); c.width = W * S; c.height = H * S;
-  const f = c.getContext('2d'); f.scale(S, S);
-  f.fillStyle = '#1a1d28'; f.fillRect(0, 0, W, H);
-  // wood planks
-  for (let y = 0; y < 160; y += 2) {
-    f.fillStyle = (y / 2) % 2 ? '#d49a5a' : '#cc9152'; f.fillRect(OX, OY + y, 300.8, 2);
-    for (let x = ((y * 7) % 40); x < 300; x += 40) { f.fillStyle = 'rgba(90,50,20,0.18)'; f.fillRect(OX + x, OY + y, 1, 2); }
+// ---- the hardwood, painted flat in feet, then laid into perspective ----
+const TEX = 12, TX0 = -16, TY0 = -10, TXW = 126, TYH = 74;   // texture pixels per foot, and the area it covers (feet)
+function floorTexture() {
+  const c = document.createElement('canvas'); c.width = TXW * TEX; c.height = TYH * TEX;
+  const f = c.getContext('2d'), home = teams[1], r = rng(11);
+  f.setTransform(TEX, 0, 0, TEX, -TX0 * TEX, -TY0 * TEX);
+  for (let y = TY0; y < TY0 + TYH; y += 0.5) {                  // maple planks, each its own shade
+    for (let x = TX0 - r() * 10; x < TX0 + TXW;) {
+      const len = 5 + r() * 11, t = r();
+      f.fillStyle = `hsl(${29 + t * 7},${50 + t * 12}%,${57 + t * 9}%)`; f.fillRect(x, y, len, 0.5);
+      f.fillStyle = 'rgba(90,45,15,0.4)'; f.fillRect(x, y, 0.07, 0.5);
+      x += len;
+    }
+    f.fillStyle = 'rgba(80,40,12,0.22)'; f.fillRect(TX0, y + 0.46, TXW, 0.04);
   }
-  // paint (the keys), tinted with the home colors
-  const home = teams[1];
-  f.globalAlpha = 0.55; f.fillStyle = home.main;
-  f.fillRect(px(0), py(17), 19 * FT, 16 * FT); f.fillRect(px(75), py(17), 19 * FT, 16 * FT);
-  f.globalAlpha = 1;
-  f.strokeStyle = '#ffffff'; f.lineWidth = 0.8;
-  const line = (x1, y1, x2, y2) => { f.beginPath(); f.moveTo(px(x1), py(y1)); f.lineTo(px(x2), py(y2)); f.stroke(); };
-  f.strokeRect(px(0), py(0), 94 * FT, 50 * FT);
-  line(47, 0, 47, 50);
-  f.beginPath(); f.arc(px(47), py(25), 6 * FT, 0, Math.PI * 2); f.stroke();
-  f.beginPath(); f.arc(px(47), py(25), 2 * FT, 0, Math.PI * 2); f.stroke();
-  [0, 1].forEach(sideIdx => {
-    const bx = sideIdx ? 88.75 : 5.25, dir = sideIdx ? -1 : 1, base = sideIdx ? 94 : 0;
-    f.strokeRect(px(Math.min(base, base + dir * 19)), py(17), 19 * FT, 16 * FT);                  // key
-    f.beginPath(); f.arc(px(base + dir * 19), py(25), 6 * FT, sideIdx ? Math.PI / 2 : -Math.PI / 2, sideIdx ? Math.PI * 1.5 : Math.PI / 2); f.stroke();   // free throw circle
-    line(base, 3, base + dir * 14, 3); line(base, 47, base + dir * 14, 47);                        // corner threes
-    const a = Math.acos((14 - 5.25) / 23.75);
-    f.beginPath(); if (sideIdx) f.arc(px(bx), py(25), 23.75 * FT, Math.PI - a, Math.PI + a); else f.arc(px(bx), py(25), 23.75 * FT, -a, a);
-    // the arc only between the corner lines
-    f.stroke();
-    f.beginPath(); f.arc(px(bx), py(25), 4 * FT, sideIdx ? Math.PI / 2 : -Math.PI / 2, sideIdx ? Math.PI * 1.5 : Math.PI / 2); f.stroke();   // restricted area
+  for (let i = 0; i < 2600; i++) {                                // grain
+    f.fillStyle = r() < 0.55 ? 'rgba(120,60,20,0.12)' : 'rgba(255,235,200,0.12)';
+    f.fillRect(TX0 + r() * TXW, TY0 + Math.floor(r() * TYH * 2) / 2 + 0.05 + r() * 0.38, 0.8 + r() * 3.5, 0.05);
+  }
+  // out of bounds: a band in the home colours, then a darker surround
+  f.fillStyle = shade(home.main, -0.3); f.beginPath(); f.rect(-6, -6, 106, 62); f.rect(0, 0, 94, 50); f.fill('evenodd');
+  f.fillStyle = 'rgba(12,10,24,0.55)'; f.beginPath(); f.rect(TX0, TY0, TXW, TYH); f.rect(-6, -6, 106, 62); f.fill('evenodd');
+  f.globalAlpha = 0.6; f.fillStyle = home.main; f.fillRect(0, 17, 19, 16); f.fillRect(75, 17, 19, 16); f.globalAlpha = 1;   // the paint
+  f.strokeStyle = '#ffffff'; f.lineWidth = 0.28;
+  const line = (x1, y1, x2, y2) => { f.beginPath(); f.moveTo(x1, y1); f.lineTo(x2, y2); f.stroke(); };
+  f.strokeRect(0, 0, 94, 50); line(47, 0, 47, 50);
+  f.beginPath(); f.arc(47, 25, 6, 0, Math.PI * 2); f.stroke();
+  [0, 1].forEach(side => {
+    const bx = side ? 88.75 : 5.25, dir = side ? -1 : 1, base = side ? 94 : 0, a = Math.acos((14 - 5.25) / 23.75);
+    const half = [side ? Math.PI / 2 : -Math.PI / 2, side ? Math.PI * 1.5 : Math.PI / 2];
+    f.strokeRect(Math.min(base, base + dir * 19), 17, 19, 16);                                   // key
+    f.beginPath(); f.arc(base + dir * 19, 25, 6, half[0], half[1]); f.stroke();                  // free throw circle
+    line(base, 3, base + dir * 14, 3); line(base, 47, base + dir * 14, 47);                      // corner threes
+    f.beginPath(); if (side) f.arc(bx, 25, 23.75, Math.PI - a, Math.PI + a); else f.arc(bx, 25, 23.75, -a, a); f.stroke();
+    f.beginPath(); f.arc(bx, 25, 4, half[0], half[1]); f.stroke();                              // restricted area
   });
-  // center logo
-  f.fillStyle = home.main; f.globalAlpha = 0.9; f.beginPath(); f.arc(px(47), py(25), 5.6 * FT, 0, Math.PI * 2); f.fill(); f.globalAlpha = 1;
-  f.fillStyle = home.alt; f.font = 'bold 7px sans-serif'; f.textAlign = 'center'; f.textBaseline = 'middle';
-  f.fillText((home.name[lang] || home.name.zh).slice(0, lang === 'en' ? 8 : 2), px(47), py(25) + 0.5);
-  // baskets: backboard + rim
-  [[4, 5.25], [90, 88.75]].forEach(b => {
-    f.fillStyle = '#ffffff'; f.fillRect(px(b[0]) - 0.5, py(22), 1.5, 6 * FT);
-    f.strokeStyle = '#ff6a1a'; f.lineWidth = 1.2; f.beginPath(); f.arc(px(b[1]), py(25), 0.9 * FT, 0, Math.PI * 2); f.stroke();
+  const txt = (str, x, y, size, col, rot) => {
+    f.save(); f.translate(x, y); if (rot) f.rotate(rot); f.scale(1 / TEX, 1 / TEX);
+    f.font = `bold ${size * TEX}px sans-serif`; f.textAlign = 'center'; f.textBaseline = 'middle'; f.fillStyle = col; f.fillText(str, 0, 0); f.restore();
+  };
+  const hn = home.name[lang] || home.name.zh, city = (home.city[lang] || home.city.zh) + (lang === 'en' ? ' ' : '') + hn;
+  f.fillStyle = home.main; f.beginPath(); f.arc(47, 25, 5.85, 0, Math.PI * 2); f.fill();         // centre logo
+  f.strokeStyle = home.alt; f.lineWidth = 0.3; f.beginPath(); f.arc(47, 25, 5.1, 0, Math.PI * 2); f.stroke();
+  txt(lang === 'en' ? hn.toUpperCase().slice(0, 9) : hn.slice(0, 2), 47, 25.2, lang === 'en' ? 2 : 3.4, home.alt);
+  txt(lang === 'en' ? city.toUpperCase() : city, 47, -3, 2.6, 'rgba(255,255,255,0.85)');
+  txt('PIXEL HOOPS', 47, 53, 2.6, 'rgba(255,255,255,0.7)');
+  txt(hn, -3, 25, 2.4, home.alt, -Math.PI / 2); txt(hn, 97, 25, 2.4, home.alt, Math.PI / 2);
+  return c;
+}
+function projectFloor() {
+  const tex = floorTexture(), c = document.createElement('canvas'); c.width = W * S; c.height = H * S;
+  const a = c.getContext('2d'); a.imageSmoothingEnabled = true;
+  for (let row = Math.max(0, Math.floor(P(47, TY0, 0).y * S)); row < H * S; row++) {           // one screen row at a time
+    const y0 = floorY(row / S), y1 = floorY((row + 1) / S), ym = (y0 + y1) / 2;
+    if (y0 > TY0 + TYH) break;
+    const l = P(TX0, ym, 0), r = P(TX0 + TXW, ym, 0);
+    a.drawImage(tex, 0, Math.max(0, (y0 - TY0) * TEX), tex.width, Math.max(0.5, (y1 - y0) * TEX), l.x * S, row, (r.x - l.x) * S, 1);
+  }
+  // a polished finish: pools of light from the rafters and long glossy streaks
+  a.globalCompositeOperation = 'source-atop';
+  [[23.5, 25, 30], [70.5, 25, 30], [47, 25, 22]].forEach(([x, y, rad]) => {
+    const q = P(x, y, 0), rx = rad * q.s * S;
+    a.save(); a.translate(q.x * S, q.y * S); a.scale(1, 0.6);
+    const gr = a.createRadialGradient(0, 0, 0, 0, 0, rx); gr.addColorStop(0, 'rgba(255,240,210,0.26)'); gr.addColorStop(1, 'rgba(255,240,210,0)');
+    a.fillStyle = gr; a.fillRect(-rx, -rx, rx * 2, rx * 2); a.restore();
   });
-  return (floorImg = c);
+  [70, 125, 195, 250].forEach(x => {
+    const gr = a.createLinearGradient(0, 64 * S, 0, 190 * S); gr.addColorStop(0, 'rgba(255,255,255,0.12)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    a.fillStyle = gr; a.fillRect((x - 2.5) * S, 64 * S, 5 * S, 126 * S);
+  });
+  return c;
+}
+
+// ---- the arena around it: tiered stands full of fans, LED boards, benches, rafters ----
+const FAN = ['#e8e8e8', '#30343c', '#c03a3a', '#3a6ac0', '#e0b030', '#5a9a4a', '#8a4ac0', '#f08aa0'];
+function fan(a, x, y, z, r, cheer, home, away) {
+  const v = [r(), r(), r(), r(), r(), r(), r(), r()];             // always the same draws, so both crowd frames match
+  const b = P(x, y, z), s = b.s;
+  if (v[0] < 0.08) { a.fillStyle = '#2c2446'; a.fillRect(b.x - 0.7 * s, b.y - 1.4 * s, 1.4 * s, 1.4 * s); return; }   // an empty seat
+  const shirt = v[1] < 0.42 ? home.main : v[1] < 0.62 ? away.main : v[1] < 0.7 ? home.alt : FAN[Math.floor(v[2] * FAN.length)];
+  const skin = SKINS[Math.floor(v[3] * SKINS.length)], hair = HAIRS[Math.floor(v[4] * 5)];
+  const up = cheer && v[5] < 0.8 ? (0.3 + v[6] * 0.5) * s : 0, arms = cheer && v[7] < 0.75;
+  const tw = 1.5 * s, th = 1.8 * s, hr = 0.58 * s, by = b.y - up;
+  a.fillStyle = shirt; a.fillRect(b.x - tw / 2, by - th, tw, th);
+  a.fillStyle = 'rgba(0,0,0,0.25)'; a.fillRect(b.x + tw / 4, by - th, tw / 4, th);
+  if (arms) { a.fillStyle = skin; a.fillRect(b.x - tw / 2 - 0.3 * s, by - th - 1.2 * s, 0.4 * s, 1.4 * s); a.fillRect(b.x + tw / 2 - 0.1 * s, by - th - 1.2 * s, 0.4 * s, 1.4 * s); }
+  a.fillStyle = skin; a.beginPath(); a.arc(b.x, by - th - hr * 0.8, hr, 0, Math.PI * 2); a.fill();
+  a.fillStyle = hair; a.fillRect(b.x - hr, by - th - hr * 1.8, hr * 2, hr * 0.75);
+}
+const benchX = (s, i) => (s ? 54 : 21.5) + i * 2.4;
+let floorProj = null, arenaImgs = null, cheerUntil = 0;
+function buildArena(cheer) {
+  const c = document.createElement('canvas'); c.width = W * S; c.height = H * S;
+  const a = c.getContext('2d'), home = teams[1], away = teams[0], r = rng(77);
+  const bg = a.createLinearGradient(0, 0, 0, H * S); bg.addColorStop(0, '#07060f'); bg.addColorStop(0.4, '#171130'); bg.addColorStop(1, '#0c0a16');
+  a.fillStyle = bg; a.fillRect(0, 0, W * S, H * S);
+  a.setTransform(S, 0, 0, S, 0, 0);
+  const quad = (pts, col) => { a.fillStyle = col; a.beginPath(); pts.forEach((q, i) => i ? a.lineTo(q.x, q.y) : a.moveTo(q.x, q.y)); a.closePath(); a.fill(); };
+  for (let i = 15; i >= 0; i--) {                                 // far stands: rows rising away from the court
+    const yr = -11 - i * 2.4, zr = 1.2 + i * 1.7, x0 = -18, x1 = 112;
+    quad([P(x0, yr + 1.2, zr - 1.7), P(x1, yr + 1.2, zr - 1.7), P(x1, yr + 1.2, zr), P(x0, yr + 1.2, zr)], '#120e1e');
+    quad([P(x0, yr + 1.2, zr), P(x1, yr + 1.2, zr), P(x1, yr - 1.2, zr), P(x0, yr - 1.2, zr)], i % 2 ? '#241c3a' : '#1e1832');
+    for (let x = x0 + 1; x < x1; x += 2.1) fan(a, x + (r() - 0.5) * 0.5, yr, zr, r, cheer, home, away);
+  }
+  [-1, 1].forEach(sd => {                                         // stands behind both baselines
+    for (let j = 11; j >= 0; j--) {
+      const xr = sd < 0 ? -18 - j * 2.4 : 112 + j * 2.4, zr = 1.2 + j * 1.7, xf = xr - sd * 1.2, xb = xr + sd * 1.2, y0 = -11, y1 = 64;
+      quad([P(xf, y0, zr - 1.7), P(xf, y1, zr - 1.7), P(xf, y1, zr), P(xf, y0, zr)], '#120e1e');
+      quad([P(xf, y0, zr), P(xf, y1, zr), P(xb, y1, zr), P(xb, y0, zr)], j % 2 ? '#241c3a' : '#1e1832');
+      for (let y = y0 + 1; y < y1; y += 2.1) fan(a, xr, y + (r() - 0.5) * 0.5, zr, r, cheer, home, away);
+    }
+  });
+  a.fillStyle = 'rgba(10,8,25,0.32)'; a.fillRect(0, 0, W, H);     // the stands sit in shadow
+  a.drawImage(floorProj, 0, 0, W, H);
+  // LED board along the far sideline
+  const lb = P(-16, -9, 0), lt = P(110, -9, 2.2), lh = lb.y - lt.y;
+  a.fillStyle = '#06060c'; a.fillRect(lb.x, lt.y, lt.x - lb.x, lh);
+  a.save(); a.beginPath(); a.rect(lb.x, lt.y + 0.3, lt.x - lb.x, lh - 0.6); a.clip();
+  a.font = `bold ${lh * 0.62}px sans-serif`; a.textBaseline = 'middle'; a.textAlign = 'left';
+  const words = ['PIXEL HOOPS', '★', (home.city[lang] || home.city.zh) + ' ' + (home.name[lang] || home.name.zh), '●', 'NBA RULES', '★', (away.city[lang] || away.city.zh) + ' ' + (away.name[lang] || away.name.zh), '●'];
+  for (let x = lb.x + 1, k = 0; x < lt.x; k++) {
+    const w = words[k % words.length]; a.fillStyle = k % 4 === 2 ? shade(home.main, 0.35) : k % 4 === 0 ? '#ffd23a' : k % 4 === 3 ? shade(away.main, 0.35) : '#ffffff';
+    a.fillText(w, x, lt.y + lh / 2); x += a.measureText(w).width + lh * 0.8;
+  }
+  a.restore();
+  a.fillStyle = 'rgba(255,255,255,0.08)'; a.fillRect(lb.x, lt.y, lt.x - lb.x, lh * 0.35);
+  // team benches
+  [0, 1].forEach(sd => {
+    const t = teams[sd];
+    for (let i = 0; i < 8; i++) {
+      const x = benchX(sd, i);
+      quad([P(x - 0.8, -5.4, 0.2), P(x + 0.8, -5.4, 0.2), P(x + 0.8, -5.4, 3.4), P(x - 0.8, -5.4, 3.4)], shade(t.main, -0.25));
+      quad([P(x - 0.8, -5.4, 1.5), P(x + 0.8, -5.4, 1.5), P(x + 0.8, -3.9, 1.5), P(x - 0.8, -3.9, 1.5)], t.main);
+      quad([P(x - 0.8, -3.9, 0), P(x + 0.8, -3.9, 0), P(x + 0.8, -3.9, 1.5), P(x - 0.8, -3.9, 1.5)], shade(t.main, -0.5));
+    }
+  });
+  // rafters: lamps and soft beams falling onto the court
+  a.globalCompositeOperation = 'lighter';
+  [[23.5, 25, 70], [47, 22, 160], [70.5, 25, 250]].forEach(([x, y, tx]) => {
+    const f = P(x, y, 0), spread = 26 * f.s;
+    const gr = a.createLinearGradient(0, -2, 0, f.y); gr.addColorStop(0, 'rgba(255,240,210,0.16)'); gr.addColorStop(1, 'rgba(255,240,210,0)');
+    a.fillStyle = gr; a.beginPath(); a.moveTo(tx - 4, -2); a.lineTo(tx + 4, -2); a.lineTo(f.x + spread, f.y); a.lineTo(f.x - spread, f.y); a.closePath(); a.fill();
+  });
+  [40, 70, 100, 220, 250, 280].forEach(x => {
+    const gr = a.createRadialGradient(x, 2, 0, x, 2, 6); gr.addColorStop(0, 'rgba(255,250,235,0.9)'); gr.addColorStop(1, 'rgba(255,250,235,0)');
+    a.fillStyle = gr; a.fillRect(x - 6, -4, 12, 12);
+  });
+  return c;
+}
+
+// ---- the post-processing that gives the HD-2D look ----
+const bufs = {};
+function buf(name, w, h) {
+  const b = bufs[name] || (bufs[name] = document.createElement('canvas'));
+  if (b.width !== w || b.height !== h) { b.width = w; b.height = h; b.dirty = true; }
+  return b;
+}
+function tiltShift() {                    // depth of field: the stands up top and the very front go soft
+  const w = cv.width, h = cv.height, sm = buf('dof', w / 4, h / 4), sg = sm.getContext('2d');
+  sg.filter = 'blur(1.6px)'; sg.clearRect(0, 0, sm.width, sm.height); sg.drawImage(cv, 0, 0, sm.width, sm.height); sg.filter = 'none';
+  const m = buf('dofmask', w, h);
+  if (m.dirty) {
+    const mg = m.getContext('2d'), gr = mg.createLinearGradient(0, 0, 0, h);
+    gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(0.2, 'rgba(0,0,0,0.7)'); gr.addColorStop(0.3, 'rgba(0,0,0,0)');
+    gr.addColorStop(0.9, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,0.85)');
+    mg.fillStyle = gr; mg.fillRect(0, 0, w, h); m.dirty = false;
+  }
+  const big = buf('dofbig', w, h), bg = big.getContext('2d');
+  bg.globalCompositeOperation = 'source-over'; bg.clearRect(0, 0, w, h); bg.imageSmoothingEnabled = true; bg.drawImage(sm, 0, 0, w, h);
+  bg.globalCompositeOperation = 'destination-in'; bg.drawImage(m, 0, 0); bg.globalCompositeOperation = 'source-over';
+  g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(big, 0, 0); g.restore();
+}
+function glow() {                         // bloom, a warm grade and a vignette
+  const w = cv.width, h = cv.height, b = buf('bloom', w / 4, h / 4), bl = b.getContext('2d');
+  bl.filter = 'brightness(0.7) contrast(3) saturate(1.4) blur(3px)'; bl.clearRect(0, 0, b.width, b.height); bl.drawImage(cv, 0, 0, b.width, b.height); bl.filter = 'none';
+  g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.imageSmoothingEnabled = true;
+  g.globalCompositeOperation = 'screen'; g.globalAlpha = 0.34; g.drawImage(b, 0, 0, w, h);
+  g.globalAlpha = 1; g.globalCompositeOperation = 'soft-light'; g.fillStyle = 'rgba(255,190,110,0.14)'; g.fillRect(0, 0, w, h);
+  g.globalCompositeOperation = 'source-over';
+  const v = buf('vig', w, h);
+  if (v.dirty) {
+    const vg = v.getContext('2d'), gr = vg.createRadialGradient(w / 2, h * 0.58, h * 0.35, w / 2, h * 0.58, w * 0.7);
+    gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(6,4,18,0.6)'); vg.fillStyle = gr; vg.fillRect(0, 0, w, h); v.dirty = false;
+  }
+  g.drawImage(v, 0, 0); g.restore();
+}
+function hash(i, k) { const x = Math.sin(i * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x); }
+function dust(now) {                      // motes drifting in the light
+  const t = now / 1000;
+  g.save(); g.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 46; i++) {
+    const x = 40 + ((hash(i, 1) * 240 + Math.sin(t * 0.3 + i) * 8 + t * 2) % 240 + 240) % 240;
+    const y = 10 + ((hash(i, 2) * 150 - t * (2 + hash(i, 3) * 3)) % 150 + 150) % 150;
+    g.fillStyle = `rgba(255,240,200,${0.18 + 0.3 * Math.abs(Math.sin(t + i))})`;
+    const sz = hash(i, 4) < 0.3 ? 0.75 : 0.5; g.fillRect(x, y, sz, sz);
+  }
+  g.restore();
 }
 
 // ---- where everyone stands (feet) ----
@@ -211,22 +386,23 @@ function computeBall() {
   let holder = null, ball = null;
   for (const e of evs) {
     if (e.k === 'hold') holder = e.p;
-    if (e.k === 'pass') { if (pt < e.t + e.dur) { const a = pos[e.from], b = pos[e.to]; if (a && b) { const k = (pt - e.t) / e.dur; ball = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, h: Math.sin(k * Math.PI) * 2 }; } holder = null; } else { holder = e.to; ball = null; } }
+    if (e.k === 'pass') { if (pt < e.t + e.dur) { const a = pos[e.from], b = pos[e.to]; if (a && b) { const k = (pt - e.t) / e.dur; ball = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, h: 4 + Math.sin(k * Math.PI) * 3 }; } holder = null; } else { holder = e.to; ball = null; } }
     if (e.k === 'shot') {
       const fl = e.dur, k = (pt - e.t) / fl, a = pos[e.p];
-      if (k < 1 && a) { ball = { x: a.x + (B.x - a.x) * k, y: a.y + (B.y - a.y) * k, h: Math.sin(k * Math.PI) * (e.type === 'three' ? 12 : 8) + k * 3 }; holder = null; }
-      else { ball = { x: B.x, y: B.y, h: 3 }; holder = null; }
+      if (k < 1 && a) { ball = { x: a.x + (B.x - a.x) * k, y: a.y + (B.y - a.y) * k, h: 8 + (RIM - 8) * k + Math.sin(k * Math.PI) * (e.type === 'three' ? 11 : 7) }; holder = null; }
+      else { ball = { x: B.x, y: B.y, h: RIM }; holder = null; }
     }
-    if (e.k === 'make' || e.k === 'miss') { ball = { x: B.x, y: B.y, h: Math.max(0, 3 - (pt - e.t) * 6) }; holder = null; }
-    if (e.k === 'block') { const a = pos[e.p]; if (a) ball = { x: a.x, y: a.y, h: 4 }; holder = null; }
-    if (e.k === 'reb' || e.k === 'steal') { const p = e.k === 'steal' ? e.by : e.p; const a = pos[p]; if (a && pt < e.t + 0.4 && ball) { const k = (pt - e.t) / 0.4; ball = { x: ball.x + (a.x - ball.x) * k, y: ball.y + (a.y - ball.y) * k, h: 2 }; } else { holder = p; ball = null; } }
-    if (e.k === 'ft') { const a = pos[e.p], k = clamp((pt - (e.t - 0.9)) / 0.9, 0, 1); if (a) ball = { x: a.x + (B.x - a.x) * k, y: a.y + (B.y - a.y) * k, h: Math.sin(k * Math.PI) * 7 + k * 3 }; holder = null; }
+    if (e.k === 'make') { ball = { x: B.x, y: B.y, h: Math.max(0.6, RIM - (pt - e.t) * 18) }; holder = null; }   // drops through the net
+    if (e.k === 'miss') { ball = { x: B.x, y: B.y, h: RIM + Math.sin(clamp((pt - e.t) * 2.2, 0, 1) * Math.PI) * 5 }; holder = null; }   // clanks off the rim
+    if (e.k === 'block') { const a = pos[e.p]; if (a) ball = { x: a.x, y: a.y, h: 9 }; holder = null; }
+    if (e.k === 'reb' || e.k === 'steal') { const p = e.k === 'steal' ? e.by : e.p; const a = pos[p]; if (a && pt < e.t + 0.4 && ball) { const k = (pt - e.t) / 0.4; ball = { x: ball.x + (a.x - ball.x) * k, y: ball.y + (a.y - ball.y) * k, h: ball.h + (4 - ball.h) * k }; } else { holder = p; ball = null; } }
+    if (e.k === 'ft') { const a = pos[e.p], k = clamp((pt - (e.t - 0.9)) / 0.9, 0, 1); if (a) ball = { x: a.x + (B.x - a.x) * k, y: a.y + (B.y - a.y) * k, h: 8 + (RIM - 8) * k + Math.sin(k * Math.PI) * 6 }; holder = null; }
   }
   const nextFt = cur.tl.find(e => e.k === 'ft' && pt >= e.t - 1.6 && pt < e.t - 0.9);
   if (nextFt) { holder = nextFt.p; ball = null; }
   if (holder != null && pos[holder]) {
-    const a = pos[holder], bounce = Math.abs(Math.sin(pt * 9)) * 1.2;
-    ballPos = { x: a.x + (a.face || 1) * 0.9, y: a.y + 0.6, h: 1 + bounce, holder };
+    const a = pos[holder], bounce = Math.abs(Math.sin(pt * 9)) * 3.2;     // dribbling
+    ballPos = { x: a.x + (a.face || 1) * 1.3, y: a.y + 0.8, h: 0.4 + bounce, holder };
   } else if (ball) ballPos = Object.assign({ holder: null }, ball);
 }
 function placeInitial() {          // a jump ball at center court
@@ -236,7 +412,7 @@ function placeInitial() {          // a jump ball at center court
     const dir = s ? 1 : -1, xs = [2, 9, 9, 16, 16][i], ys = [0, -8, 8, -14, 14][i];
     lastPos[p.id] = pos[p.id] = { x: 47 + dir * (i ? xs : 1.5), y: 25 + (i ? ys : 0), face: -dir };
   }));
-  ballPos = { x: 47, y: 25, h: 8 };
+  ballPos = { x: 47, y: 25, h: 9 };
 }
 
 // ---------------- players: big-headed pixel sprites, each with their own look ----------------
@@ -336,40 +512,116 @@ function drawPlayer(p, team, at, hasBall) {
   const step = at.moving ? Math.floor(performance.now() / 110) % 2 + 1 : 0;
   const img = sprite(p, team, step), w = img.width * PZ, h = img.height * PZ;
   const k = PZ * 2;                       // overlay scale to match the sprite
-  const fx = Math.round(px(at.x) * 4) / 4, fy = Math.round(py(at.y) * 4) / 4;
+  const f = P(at.x, at.y, 0), fx = Math.round(f.x * S) / S, fy = Math.round(f.y * S) / S;
+  // a reflection in the polished floor
+  g.save(); g.globalAlpha = 0.17; g.translate(fx, fy + 0.6); g.scale(1, -0.6); g.drawImage(img, -w / 2, -h, w, h); g.restore();
   // shadow (stars stand in a golden glow)
-  g.fillStyle = p.star ? 'rgba(255,210,60,0.45)' : 'rgba(0,0,0,0.3)';
-  g.beginPath(); g.ellipse(fx, fy + 0.5, (p.star ? 5.5 : 4.5) * k, 1.6 * k, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = p.star ? 'rgba(255,210,60,0.5)' : 'rgba(0,0,0,0.35)';
+  g.beginPath(); g.ellipse(fx, fy + 0.3, (p.star ? 5.5 : 4.5) * k, 1.8 * k, 0, 0, Math.PI * 2); g.fill();
   g.drawImage(img, fx - w / 2, fy - h + 1, w, h);
   const head = fy - h + 1;
   if (p.star) { g.fillStyle = '#ffd23a'; g.fillRect(fx - 0.5 * k, head - 3 * k, k, k); g.fillRect(fx - 1.5 * k, head - 2 * k, 3 * k, k); g.fillRect(fx - 0.5 * k, head - k, k, k); }
-  if (hasBall) {
+  if (hasBall) overlays.push(() => {
     g.fillStyle = '#ffe14a'; g.beginPath(); g.moveTo(fx - 2 * k, head - 6 * k); g.lineTo(fx + 2 * k, head - 6 * k); g.lineTo(fx, head - 3.5 * k); g.fill();
     const label = lang === 'en' ? p.name.en.split(' ').pop() : p.name.zh;
     g.font = `bold ${4 * k}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'bottom';
     const tw = g.measureText(label).width + 3 * k;
     g.fillStyle = 'rgba(10,10,20,0.75)'; g.fillRect(fx - tw / 2, head - 11 * k, tw, 5 * k);
     g.fillStyle = p.star ? '#ffd23a' : '#ffffff'; g.fillText(label, fx, head - 6.4 * k);
-  }
+  });
 }
+function drawBenches(L) {                 // the players not on the floor sit on their team's bench
+  [0, 1].forEach(sd => {
+    const on = new Set(L[sd].map(p => p.id));
+    teams[sd].roster.filter(p => !on.has(p.id)).slice(0, 8).forEach((p, i) => {
+      const img = sprite(p, teams[sd], 0), q = P(benchX(sd, i), -4.7, 1.5), w = img.width * PZ, hh = 28 * PZ;
+      g.drawImage(img, 0, 0, img.width, 28, Math.round((q.x - w / 2) * S) / S, Math.round((q.y - hh) * S) / S, w, hh);
+    });
+  });
+}
+function basket(side, front) {            // stanchion, glass backboard, rim and net; the front half of the rim draws after the ball
+  const m = x => side ? 94 - x : x, bx = m(5.25), home = teams[1];
+  if (!front) {
+    const x0 = m(-6.5), x1 = m(-2), xi = side ? x0 : x1;                                       // padded base behind the baseline
+    poly([P(x0, 23, 2.6), P(x1, 23, 2.6), P(x1, 27, 2.6), P(x0, 27, 2.6)], shade(home.main, 0.15));
+    poly([P(xi, 23, 0), P(xi, 27, 0), P(xi, 27, 2.6), P(xi, 23, 2.6)], shade(home.main, -0.2));
+    poly([P(x0, 27, 0), P(x1, 27, 0), P(x1, 27, 2.6), P(x0, 27, 2.6)], home.main);
+    const base = P(m(-4), 25, 2.6), top = P(m(-4), 25, RIM + 2.4), arm = P(m(2.8), 25, RIM + 1.2);
+    seg(base, top, '#2a2d38', 1.6); seg(top, arm, '#2a2d38', 1.1); seg(base, top, 'rgba(255,255,255,0.18)', 0.4);
+    const ph = 28 * Math.PI / 180, tx = (side ? 1 : -1) * Math.sin(ph), ty = Math.cos(ph), cx = m(3.4);
+    const C = (u, z) => P(cx + tx * u, 25 + ty * u, z);
+    poly([C(-3.6, RIM - 1.2), C(3.6, RIM - 1.2), C(3.6, RIM + 3.3), C(-3.6, RIM + 3.3)], 'rgba(215,235,255,0.42)', '#ffffff', 0.6);
+    poly([C(-1.2, RIM + 0.15), C(1.2, RIM + 0.15), C(1.2, RIM + 2), C(-1.2, RIM + 2)], null, '#ff5a2a', 0.45);
+    poly([C(-3.6, RIM + 2.6), C(-1.5, RIM + 3.3), C(-3.6, RIM + 3.3)], 'rgba(255,255,255,0.35)');    // a glint on the glass
+    seg(P(cx, 25, RIM), P(m(4.2), 25, RIM), '#d0d4dc', 0.6);
+  }
+  const ring = (rad, z, a) => P(bx + rad * Math.cos(a), 25 + rad * Math.sin(a), z);
+  const A0 = front ? 0 : Math.PI, n = 8;
+  g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 0.25; g.beginPath();
+  for (let i = 0; i <= n; i++) { const a = A0 + i / n * Math.PI, t = ring(1.15, RIM, a), b = ring(0.7, RIM - 2.4, a + 0.3); g.moveTo(t.x, t.y); g.lineTo(b.x, b.y); }
+  for (let i = 0; i <= n; i++) { const q = ring(0.7, RIM - 2.4, A0 + i / n * Math.PI); if (i) g.lineTo(q.x, q.y); else g.moveTo(q.x, q.y); }
+  for (let i = 0; i <= n; i++) { const q = ring(0.92, RIM - 1.2, A0 + i / n * Math.PI); if (i) g.lineTo(q.x, q.y); else g.moveTo(q.x, q.y); }
+  g.stroke();
+  g.strokeStyle = '#ff5a1a'; g.lineWidth = 0.8; g.beginPath();
+  for (let i = 0; i <= 12; i++) { const q = ring(1.15, RIM, A0 + i / 12 * Math.PI); if (i) g.lineTo(q.x, q.y); else g.moveTo(q.x, q.y); }
+  g.stroke();
+}
+function drawBall() {
+  const sh = P(ballPos.x, ballPos.y, 0), b = P(ballPos.x, ballPos.y, ballPos.h), r = Math.max(2, 1.05 * b.s);
+  g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(sh.x, sh.y, r * 1.1, r * 0.45, 0, 0, Math.PI * 2); g.fill();
+  const gr = g.createRadialGradient(b.x - r * 0.4, b.y - r * 0.4, r * 0.1, b.x, b.y, r);
+  gr.addColorStop(0, '#ffb070'); gr.addColorStop(0.6, '#e8742a'); gr.addColorStop(1, '#9a4010');
+  g.fillStyle = gr; g.beginPath(); g.arc(b.x, b.y, r, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#4a1e06'; g.lineWidth = 0.35; g.beginPath(); g.arc(b.x, b.y, r, 0, Math.PI * 2);
+  g.moveTo(b.x, b.y - r); g.lineTo(b.x, b.y + r); g.moveTo(b.x - r, b.y); g.lineTo(b.x + r, b.y); g.stroke();
+}
+function jumbotron() {                    // the scoreboard hanging over centre court
+  const home = teams[1], away = teams[0], sc = game ? liveScore() : [0, 0];
+  const x0 = 124, y0 = 4, w = 72, h = 26, hw = w / 2 - 1;
+  g.fillStyle = '#3a3d4c'; g.fillRect(x0 + 8, -2, 1, y0 + 2); g.fillRect(x0 + w - 9, -2, 1, y0 + 2);
+  g.fillStyle = '#1b1c26'; g.fillRect(x0 - 2, y0 - 1, w + 4, h + 2);
+  g.fillStyle = '#2c2e3c'; g.fillRect(x0 - 2, y0 + h + 1, w + 4, 2);
+  [[away, sc[0], x0], [home, sc[1], x0 + w / 2 + 1]].forEach(([t, v, x]) => {
+    g.fillStyle = '#05060a'; g.fillRect(x, y0, hw, h);
+    g.fillStyle = t.main; g.fillRect(x, y0, hw, 6);
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = t.alt; g.font = 'bold 4.5px sans-serif'; g.fillText((t.name[lang] || t.name.zh).slice(0, lang === 'en' ? 10 : 2), x + hw / 2, y0 + 3.3);
+    g.fillStyle = '#ffcf3a'; g.font = 'bold 13px monospace'; g.fillText(String(v), x + hw / 2, y0 + 16.5);
+  });
+  const t = Math.floor(performance.now() / 300);
+  for (let i = 0; i < 18; i++) { g.fillStyle = (i + t) % 3 ? '#ffd23a' : home.main; g.fillRect(x0 - 2 + i * 4.22, y0 + h + 3.4, 3, 1.1); }
+}
+const overlays = [];
 function draw() {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  if (!arenaImgs) { floorProj = projectFloor(); arenaImgs = [buildArena(false), buildArena(true)]; }
+  const now = performance.now();
+  g.drawImage(arenaImgs[now < cheerUntil && Math.floor(now / 170) % 2 ? 1 : 0], 0, 0);
   g.setTransform(S, 0, 0, S, 0, 0);
-  g.drawImage(floor(), 0, 0, W, H);
-  if (!game) return;
-  const L = cur ? lineups : [game.ts[0].on, game.ts[1].on];
+  overlays.length = 0;
   const list = [];
-  [0, 1].forEach(s => L[s].forEach(p => { if (pos[p.id]) list.push({ p, team: teams[s], at: pos[p.id] }); }));
-  list.sort((a, b) => a.at.y - b.at.y).forEach(o => drawPlayer(o.p, o.team, o.at, ballPos.holder === o.p.id));
-  // the ball and its shadow
-  const bx = px(ballPos.x), by = py(ballPos.y);
-  const bz = by - ballPos.h * FT * 0.6;
-  g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(bx, by + 1.5, 2.5, 1, 0, 0, Math.PI * 2); g.fill();
-  g.fillStyle = '#e8742a'; g.beginPath(); g.arc(bx, bz, 2.25, 0, Math.PI * 2); g.fill();
-  g.strokeStyle = '#5a2a0a'; g.lineWidth = 0.5; g.stroke();
-  g.beginPath(); g.moveTo(bx, bz - 2.25); g.lineTo(bx, bz + 2.25); g.moveTo(bx - 2.25, bz); g.lineTo(bx + 2.25, bz); g.stroke();
-  // pop-up text
+  [0, 1].forEach(side => { list.push({ d: 24.4, f: () => basket(side, false) }, { d: 25.6, f: () => basket(side, true) }); });
+  if (game) {
+    const L = cur ? lineups : [game.ts[0].on, game.ts[1].on];
+    drawBenches(L);
+    [0, 1].forEach(sd => L[sd].forEach(p => { const at = pos[p.id]; if (at) list.push({ d: at.y, f: () => drawPlayer(p, teams[sd], at, ballPos.holder === p.id) }); }));
+    list.push({ d: ballPos.y + 0.05, f: drawBall });
+  }
+  list.sort((a, b) => a.d - b.d).forEach(o => o.f());
+  dust(now);
+  const fx = fxOn && canFilter;
+  if (fx) tiltShift();
+  g.setTransform(S, 0, 0, S, 0, 0);
+  jumbotron();
+  if (fx) glow();
+  // crisp labels on top of everything
+  g.setTransform(S, 0, 0, S, 0, 0);
+  overlays.forEach(o => o());
   g.textAlign = 'center'; g.textBaseline = 'bottom'; g.font = 'bold 7px sans-serif';
-  popups.forEach(o => { g.globalAlpha = clamp(1 - o.age / 1.6, 0, 1); g.fillStyle = '#000'; g.fillText(o.text, px(o.x) + 0.5, py(o.y) - 21 - o.age * 4 + 0.5); g.fillStyle = o.color; g.fillText(o.text, px(o.x), py(o.y) - 21 - o.age * 4); });
+  popups.forEach(o => {
+    const q = P(o.x, o.y, 0), y = q.y - 30 - o.age * 4;
+    g.globalAlpha = clamp(1 - o.age / 1.6, 0, 1); g.fillStyle = '#000'; g.fillText(o.text, q.x + 0.5, y + 0.5); g.fillStyle = o.color; g.fillText(o.text, q.x, y);
+  });
   g.globalAlpha = 1;
 }
 
@@ -400,7 +652,8 @@ function tick(dt) {
   while (shownTl < cur.tl.length && cur.tl[shownTl].t <= pt) {
     const e = cur.tl[shownTl++], at = pos[e.p] || ballPos;
     const label = { make: e.pts === 3 ? '3PT!' : '+2', block: 'BLOCK!', steal: 'STEAL!', foul: lang === 'zh' ? '犯規' : 'FOUL', ft: e.made ? '+1' : 'FT ✕', reb: lang === 'zh' ? '籃板' : 'REB' }[e.k];
-    if (label && at) { if (popups.length >= 4) popups.shift(); } if (label && at) popups.push({ text: label, x: at.x, y: at.y, age: 0, color: e.k === 'make' ? '#ffe14a' : e.k === 'block' || e.k === 'steal' ? '#7ae0ff' : e.k === 'foul' ? '#ff7a7a' : '#ffffff' });
+    if (label && at) { if (popups.length >= 4) popups.shift(); } if (e.k === 'make') cheerUntil = performance.now() + 1800;
+    if (label && at) popups.push({ text: label, x: at.x, y: at.y, age: 0, color: e.k === 'make' ? '#ffe14a' : e.k === 'block' || e.k === 'steal' ? '#7ae0ff' : e.k === 'foul' ? '#ff7a7a' : '#ffffff' });
   }
   // play-by-play lines when their moment comes
   while (logShown < cur.log.length && cur.log[logShown].t != null && cur.log[logShown].t <= pt) showEvent(cur.log[logShown++]);   // undated events (subs, period end) wait for the end
@@ -520,9 +773,9 @@ function renderAll() {
   document.documentElement.lang = lang === 'zh' ? 'zh-Hant' : 'en';
   document.querySelectorAll('[data-t]').forEach(el => { el.textContent = T(el.getAttribute('data-t')); });
   document.title = T('title') + ' · ' + (lang === 'zh' ? 'Pixel Hoops' : '像素籃球');
-  $('sim').textContent = T('sim'); $('next').textContent = T('next'); $('newTeams').textContent = T('newTeams'); $('lang').textContent = T('lang');
+  $('sim').textContent = T('sim'); $('next').textContent = T('next'); $('newTeams').textContent = T('newTeams'); $('lang').textContent = T('lang'); $('fx').textContent = T('fx')(fxOn && canFilter); $('fx').disabled = !canFilter;
   setPlaying(playing);
-  floorImg = null; renderBoard.last = null; renderBoard.cards = null;
+  arenaImgs = null; renderBoard.last = null; renderBoard.cards = null;
   renderSide();
 }
 function endGame() {
@@ -544,6 +797,7 @@ $('sim').onclick = () => {
 };
 $('next').onclick = () => newGame(false);
 $('newTeams').onclick = () => { if (!game.log.length || game.over || confirm(lang === 'zh' ? '重新組隊會結束這場比賽，確定嗎？' : 'Make new teams and end this game?')) { setPlaying(false); cur = null; newGame(true); } };
+$('fx').onclick = () => { fxOn = !fxOn; try { localStorage.setItem('hoops.fx', fxOn ? 'on' : 'off'); } catch (e) { /* ignore */ } $('fx').textContent = T('fx')(fxOn && canFilter); };
 $('lang').onclick = () => { lang = lang === 'zh' ? 'en' : 'zh'; try { localStorage.setItem('hoops.lang', lang); } catch (e) { /* ignore */ } renderAll(); };
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
