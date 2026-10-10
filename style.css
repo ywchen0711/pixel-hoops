@@ -66,6 +66,18 @@ table.box th { color: var(--muted); position: sticky; top: 0; background: var(--
 table.box tr.on td:first-child { color: var(--gold); }
 table.box tr.total td { font-weight: bold; border-top: 2px solid #000; }
 .r-hi { color: #4cd07a; } .r-lo { color: #ff7a7a; }
+.playbook .pbhead { font-size: 12px; color: var(--muted); margin-bottom: 6px; letter-spacing: 1px; }
+.pbbody { display: grid; grid-template-columns: 46% 1fr; gap: 10px; align-items: start; }
+#pbBoard { width: 100%; height: auto; display: block; border: 2px solid #000; border-radius: 4px; }
+#pbName { margin: 0 0 4px; font-size: 16px; color: var(--gold); }
+#pbName small { color: var(--muted); font-size: 11px; font-weight: normal; }
+#pbDesc { margin: 0 0 8px; font-size: 13px; line-height: 1.5; }
+#pbRoles { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); }
+#pbRoles b { display: inline-block; width: 16px; height: 16px; margin-right: 3px; border-radius: 50%; background: #fff; color: #111; text-align: center; font-size: 11px; line-height: 16px; }
+#pbRoles .sh { color: var(--gold); }
+#pbRoles .sh b { background: var(--gold); }
+.pblegend { font-size: 11px; color: var(--muted); margin: 8px 0 0; line-height: 1.5; }
+#log li .pl { color: #9ad8ff; }
 .help { color: var(--muted); font-size: 12px; margin: 0; line-height: 1.6; }
 @media (max-width: 1000px) { .main { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .tscore { font-size: 30px; min-width: 60px; } .clock { font-size: 22px; } .tname { font-size: 14px; } .cards { grid-template-columns: 1fr; } }

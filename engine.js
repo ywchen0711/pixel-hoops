@@ -101,6 +101,74 @@ function makeMatch() {
 }
 const ovr = p => Math.round((p.r.ins + p.r.mid + p.r.thr * 1.1 + p.r.pas * 0.8 + p.r.hnd * 0.6 + p.r.def + p.r.blk * 0.6 + p.r.reb * 0.8 + p.r.spd * 0.6) / 7.6);
 
+
+// ---------------- the playbook ----------------
+// Every half-court possession runs a set that ends in the shot the possession is going to take.
+// Slots: h ball handler, s screener (usually a big), x / a / b the others; sh = the slot that shoots.
+// passes: [when (0–1 through the set), from slot, to slot, lob?]; kf names the movement diagram (in game.js).
+const PLAYS = {
+  pnr_roll: { sh: 's', types: ['rim'], big: true, kf: 'pnr', passes: [[0.84, 'h', 's']],
+    name: { zh: '擋拆順下', en: 'Pick & Roll' },
+    desc: { zh: '長人上提替持球者擋人，持球者切入吸引防守，擋人者順勢下到籃下接球攻擊。', en: 'The big sets a screen for the ball handler, then rolls hard to the rim for the pass.' } },
+  pnr_pull: { sh: 'h', types: ['mid', 'three', 'rim'], big: false, kf: 'pnr', passes: [],
+    name: { zh: '擋拆後出手', en: 'Pick & Roll Pull-up' },
+    desc: { zh: '持球者借長人的掩護甩開防守者，趁空檔直接跳投或殺進禁區。', en: 'The handler rubs the defender off the screen and pulls up or attacks the paint.' } },
+  pnp: { sh: 's', types: ['mid', 'three'], big: true, kf: 'pnp', passes: [[0.82, 'h', 's']],
+    name: { zh: '擋拆外彈', en: 'Pick & Pop' },
+    desc: { zh: '擋人者擋完不往籃下跑，而是外拉到空檔接球投籃，專門懲罰退守的長人。', en: 'Instead of rolling, the screener pops out to open space for a catch-and-shoot.' } },
+  iso: { sh: 'h', types: ['rim', 'mid', 'three'], kf: 'iso', passes: [],
+    name: { zh: '單打', en: 'Isolation' },
+    desc: { zh: '其他四人拉開到弱邊，把空間留給一對一進攻的單打手。', en: 'Four players clear out to the weak side so one scorer can go one-on-one.' } },
+  post: { sh: 'x', types: ['rim', 'mid'], big: true, kf: 'post', passes: [[0.4, 'h', 'x']],
+    name: { zh: '低位單打', en: 'Post-up' },
+    desc: { zh: '長人在低位卡位要球，接到傳球後背身往籃下擠。', en: 'The big seals on the low block, catches the entry pass and backs down.' } },
+  dk: { sh: 'x', types: ['three'], kf: 'dk', passes: [[0.8, 'h', 'x']],
+    name: { zh: '突破分球', en: 'Drive & Kick' },
+    desc: { zh: '持球者突破吸引協防，再把球分給外線空檔的射手。', en: 'The handler drives to draw help, then kicks it out to the open shooter.' } },
+  givego: { sh: 'h', types: ['rim'], big: false, kf: 'givego', passes: [[0.3, 'h', 'x'], [0.8, 'x', 'h']],
+    name: { zh: '傳切', en: 'Give & Go' },
+    desc: { zh: '傳球後立刻切向籃下，隊友再把球回傳完成上籃。', en: 'Pass, cut hard to the rim, and get the ball right back for the layup.' } },
+  backdoor: { sh: 'x', types: ['rim'], big: false, kf: 'backdoor', passes: [[0.35, 'h', 's'], [0.8, 's', 'x']],
+    name: { zh: '背切', en: 'Backdoor Cut' },
+    desc: { zh: '側翼被貼身阻絕時先假裝外拉，再突然反跑切到防守者身後。', en: 'When the wing is overplayed, the wing fakes out and cuts behind the defender to the rim.' } },
+  floppy: { sh: 'x', types: ['three', 'mid'], big: false, kf: 'floppy', passes: [[0.85, 'h', 'x']], screens: true,
+    name: { zh: '無球掩護（Floppy）', en: 'Floppy' },
+    desc: { zh: '射手從籃下出發，選一邊繞過隊友的掩護跑到側翼接球投籃。', en: 'The shooter starts under the rim and runs off a screen to either wing for the shot.' } },
+  elevator: { sh: 'x', types: ['three'], big: false, kf: 'elevator', passes: [[0.85, 'h', 'x']],
+    name: { zh: '電梯門', en: 'Elevator Doors' },
+    desc: { zh: '射手穿過兩名並排的隊友中間，兩人立刻像電梯門一樣關上擋住追防者。', en: 'The shooter runs between two teammates who shut like elevator doors behind them.' } },
+  dho: { sh: 'x', types: ['three', 'mid', 'rim'], big: false, kf: 'dho', passes: [[0.12, 'h', 's'], [0.55, 's', 'x']],
+    name: { zh: '手遞手', en: 'Hand-off' },
+    desc: { zh: '長人在弧頂持球，把球直接遞給繞過來的後衛，順便擋住他的防守者。', en: 'The big hands the ball to a guard running past and screens the defender at the same time.' } },
+  horns_h: { sh: 'h', types: ['mid', 'three', 'rim'], big: false, kf: 'horns', passes: [],
+    name: { zh: '牛角戰術', en: 'Horns' },
+    desc: { zh: '兩名長人站在罰球線兩肘像一對牛角，持球者選邊利用掩護進攻。', en: 'Two bigs stand at the elbows like horns; the handler picks a side and uses the screen.' } },
+  horns_a: { sh: 'a', types: ['mid', 'three'], big: true, kf: 'horns', passes: [[0.82, 'h', 'a']],
+    name: { zh: '牛角外彈', en: 'Horns Pop' },
+    desc: { zh: '牛角站位擋拆後，另一邊肘區的長人外彈接球投籃。', en: 'Out of the horns set, the other big pops off the elbow for the shot.' } },
+  spain_s: { sh: 's', types: ['rim'], big: true, kf: 'spain', passes: [[0.8, 'h', 's']],
+    name: { zh: '西班牙擋拆', en: 'Spain Pick & Roll' },
+    desc: { zh: '擋拆時再加一記背掩護擋住順下者的防守人，讓長人一路空到籃下。', en: 'A pick and roll plus a back screen on the roller\u2019s defender, so the big has a clear lane.' } },
+  spain_x: { sh: 'x', types: ['three'], big: false, kf: 'spain', passes: [[0.82, 'h', 'x']],
+    name: { zh: '西班牙擋拆外彈', en: 'Spain Pick & Pop' },
+    desc: { zh: '西班牙擋拆中，做背掩護的射手擋完立刻外彈到三分線接球。', en: 'In the Spain pick and roll, the back screener pops to the arc for the three.' } },
+  motion: { sh: 'x', types: ['rim', 'mid', 'three'], kf: 'motion', passes: [[0.2, 'h', 'a'], [0.45, 'a', 's'], [0.65, 's', 'b'], [0.85, 'b', 'x']],
+    name: { zh: '五外傳導', en: 'Motion Offense' },
+    desc: { zh: '五人拉開，球不停轉移、空切、補位輪轉，直到找到空檔。', en: 'Five out: the ball swings while players cut and refill until someone is open.' } },
+  alley: { sh: 's', types: ['rim'], big: true, kf: 'alley', passes: [[0.78, 'h', 's', true]],
+    name: { zh: '空中接力', en: 'Alley-oop' },
+    desc: { zh: '長人假裝上提擋人，突然空切籃下，持球者高吊空中接力。', en: 'The big fakes a screen and cuts to the rim; the handler lobs it up for the slam.' } },
+  fast_h: { sh: 'h', special: true, kf: 'fast', passes: [],
+    name: { zh: '快攻', en: 'Fast Break' },
+    desc: { zh: '搶到球立刻推進，趁防守還沒回位直接攻擊。', en: 'Push the ball before the defense is set and attack right away.' } },
+  fast_x: { sh: 'x', special: true, kf: 'fast', passes: [[0.75, 'h', 'x']],
+    name: { zh: '快攻分球', en: 'Fast Break Pass' },
+    desc: { zh: '快攻推進時，把球分給跑到底角或籃下的隊友。', en: 'On the break, the handler finds a teammate filling the lane or the corner.' } },
+  putback: { sh: 'x', special: true, kf: null, passes: [],
+    name: { zh: '二次進攻', en: 'Second Chance' },
+    desc: { zh: '搶下進攻籃板後立刻補籃，或重新組織再攻一次。', en: 'After an offensive rebound: a quick putback or a reset.' } }
+};
+
 // ---------------- the game ----------------
 const SHOT = { rim: { base: 0.63, key: 'ins', pts: 2, foul: 0.22 }, mid: { base: 0.41, key: 'mid', pts: 2, foul: 0.06 }, three: { base: 0.345, key: 'thr', pts: 3, foul: 0.015 } };
 const SLOPE = 0.0042;      // make % per rating point above the defender
@@ -183,14 +251,18 @@ class Game {
       const hurry = this.clock - t < 26 && this.clock <= shotEnd && this.clock - t > 3;          // last shot of the period
       let use = hurry ? Math.max(0.5, this.clock - t - 2 - R() * 1.5) : Math.min(pace, avail - 0.4);
       if (use < 0.3) use = Math.max(0.1, avail - 0.2);
-      const nPass = Math.max(0, Math.round(use / 3.2 + gauss() * 0.6));
+      // who will shoot and what kind of shot, then the set that leads to it
+      const shooter = this.chooseShooter(O, holder);
+      let type = this.shotType(shooter);
+      const playId = this.choosePlay(shooter, type, guard, use), PL = PLAYS[playId];
+      const roles = this.roles(O, holder, shooter, PL.sh), ids = {};
+      Object.keys(roles).forEach(k => { ids[k] = roles[k].id; });
+      tl.push({ t, k: 'play', id: playId, end: t + use, roles: ids, flip: R() < 0.5 ? 1 : -1 });
+      say('play', { play: playId });
       let lastPasser = null;
-      for (let i = 0; i < nPass; i++) {
-        const to = pickW(O.on.filter(p => p !== holder), p => 1 + p.r.pas * 0.01);
-        const t0 = t + use * (i + 0.5) / (nPass + 1);
-        tl.push({ t: t0, k: 'pass', from: holder.id, to: to.id, dur: 0.55 });
-        lastPasser = holder; holder = to;
-      }
+      const passTo = (tp, to, lob) => { if (!to || to === holder) return; tl.push({ t: tp, k: 'pass', from: holder.id, to: to.id, dur: lob ? 0.75 : 0.5, lob: !!lob }); lastPasser = holder; holder = to; };
+      if (PL.kf) passTo(t + use * 0.05, roles.h);
+      PL.passes.forEach(q => passTo(t + use * q[0], roles[q[2]], q[3]));
       t += use;
       // shot clock violation (rare) or the period ends while holding
       if (t >= shotEnd - 0.05 && !hurry) { this.addTO(holder, null); say('shotclock', { p: holder }); result = 'to'; break; }
@@ -222,10 +294,9 @@ class Game {
       }
 
       // the shot
-      const shooter = this.chooseShooter(O, holder);
       if (shooter !== holder) { const tp = Math.max(0, t - 0.6); tl.push({ t: tp, k: 'pass', from: holder.id, to: shooter.id, dur: 0.5 }); lastPasser = holder; holder = shooter; }
       const desperate = this.clock - t < 2.5;
-      const type = desperate ? (R() < 0.7 ? 'three' : 'mid') : this.shotType(shooter);
+      if (desperate) type = R() < 0.7 ? 'three' : 'mid';
       const defender = D.on[O.on.indexOf(shooter)] || pick(D.on);
       const spot = this.shotSpot(off, type);
       const S = SHOT[type];
@@ -327,6 +398,26 @@ class Game {
     return { log: ev, tl, dur: used, clock0, period: p0, off, result, transition };
   }
 
+  choosePlay(shooter, type, seg, use) {
+    const big = shooter.pos === 'C' || shooter.pos === 'PF';
+    if (seg > 0 && use < 3.2) return 'putback';
+    if (seg === 0 && this.lastWasLive && type !== 'mid' && R() < 0.4) return R() < 0.55 ? 'fast_h' : 'fast_x';
+    const ids = Object.keys(PLAYS).filter(id => { const q = PLAYS[id]; return !q.special && q.types.includes(type) && (q.big == null || q.big === big); });
+    return ids.length ? pick(ids) : 'iso';
+  }
+  // who fills each slot of the set: the shooter's slot first, then the best ball handler, then the biggest screener
+  roles(O, holder, shooter, sh) {
+    const r = { [sh]: shooter }, rest = O.on.filter(p => p !== shooter);
+    const take = (slot, score) => {
+      if (r[slot] || !rest.length) return;
+      let b = rest[0]; rest.forEach(q => { if (score(q) > score(b)) b = q; });
+      r[slot] = b; rest.splice(rest.indexOf(b), 1);
+    };
+    take('h', p => p.r.hnd + p.r.pas + (p === holder ? 12 : 0) - (p.pos === 'C' ? 40 : 0));
+    take('s', p => p.hgt);
+    ['x', 'a', 'b'].forEach(slot => { if (!r[slot]) r[slot] = rest.shift(); });
+    return r;
+  }
   chooseShooter(O, holder) {
     return pickW(O.on, p => {
       const scoring = Math.max(this.eff(p, 'ins'), this.eff(p, 'mid'), this.eff(p, 'thr') * 1.05);
@@ -391,7 +482,7 @@ class Game {
   simToEnd() { const out = []; let r; while (out.length < 5000 && (r = this.step())) { out.push(r); if (this.over) break; } return out; }
 }
 
-const api = { Game, makeTeam, makeMatch, addStars, STARS, TEAMS, CITIES, POS, POS_NAME, RATINGS, RULES, BASKET, newStats, ovr };
+const api = { PLAYS, Game, makeTeam, makeMatch, addStars, STARS, TEAMS, CITIES, POS, POS_NAME, RATINGS, RULES, BASKET, newStats, ovr };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 root.HOOPS = api;
 })(typeof window !== 'undefined' ? window : globalThis);

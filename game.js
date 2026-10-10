@@ -2,7 +2,7 @@
 // The page: the pixel court animation, scoreboard, play-by-play, box score and roster.
 (function () {
 'use strict';
-const { Game, makeMatch, addStars, POS, POS_NAME, RULES, BASKET, newStats, ovr } = HOOPS;
+const { PLAYS, Game, makeMatch, addStars, POS, POS_NAME, RULES, BASKET, newStats, ovr } = HOOPS;
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 
@@ -18,6 +18,8 @@ const TX = {
     rt: { ins: '內線', mid: '中距', thr: '三分', ft: '罰球', pas: '傳球', hnd: '控球', spd: '速度', def: '防守', blk: '阻攻', reb: '籃板', sta: '體力' },
     today: '本場', energy: '體力', total: '全隊', player: '球員', pos: '位', hgt: '身高', ovr: '總評',
     pre: '比賽即將開始', jump: '跳球！', tipoff: '開賽跳球',
+    playbook: '戰術板', playLabel: '戰術', playRun: '戰術：', screen: '掩護！',
+    pbWait: '比賽開始後，這裡會畫出每一波進攻的戰術跑位。', pbLegend: '金色＝這套戰術的攻擊點　實線＝跑位　虛線＝傳球　T＝掩護',
     ev: {
       make: (p, e) => p + ' ' + (e.type === 'three' ? '三分球命中！' : e.type === 'mid' ? e.dist + ' 呎跳投得手' : pick(['上籃得分', '切入上籃', '禁區得手', '灌籃！'], e)) + (e.ast ? '（' + e.ast + ' 助攻）' : ''),
       miss: (p, e) => p + ' ' + (e.type === 'three' ? '三分出手不進' : e.type === 'mid' ? e.dist + ' 呎跳投不進' : '上籃沒進'),
@@ -44,6 +46,8 @@ const TX = {
     rt: { ins: 'Inside', mid: 'Mid', thr: '3PT', ft: 'FT', pas: 'Pass', hnd: 'Handle', spd: 'Speed', def: 'Def', blk: 'Block', reb: 'Reb', sta: 'Stamina' },
     today: 'Today', energy: 'Energy', total: 'Team', player: 'Player', pos: 'Pos', hgt: 'Ht', ovr: 'OVR',
     pre: 'About to tip off', jump: 'Jump ball!', tipoff: 'Opening tip',
+    playbook: 'Playbook', playLabel: 'PLAY', playRun: 'Play: ', screen: 'SCREEN!',
+    pbWait: 'Once the game starts, every possession\u2019s set is drawn here.', pbLegend: 'Gold = the finisher · solid = cuts · dashed = passes · T = screen',
     ev: {
       make: (p, e) => p + ' ' + (e.type === 'three' ? 'drains a three!' : e.type === 'mid' ? 'hits a ' + e.dist + '-footer' : pick(['lays it in', 'scores on the drive', 'finishes inside', 'throws it down!'], e)) + (e.ast ? ' (assist ' + e.ast + ')' : ''),
       miss: (p, e) => p + ' ' + (e.type === 'three' ? 'misses a three' : e.type === 'mid' ? 'misses a ' + e.dist + '-footer' : 'misses the layup'),
@@ -333,27 +337,86 @@ function dust(now) {                      // motes drifting in the light
   g.restore();
 }
 
-// ---- where everyone stands (feet) ----
+// ---- where everyone stands (feet): every possession runs a set from the playbook ----
 const SPOTS = { PG: [24, 0], SG: [19, -15], SF: [5, 21], PF: [13, 9], C: [4, -6] };
+// movement diagrams: per slot, keyframes [when 0–1, feet out from the basket, feet across]; screens: [when, screener, screened]
+const KF = {
+  pnr: { h: [[0, 27, 0], [0.35, 28, 1], [0.6, 20, 6], [0.84, 13, 8], [1, 12, 9]], s: [[0, 14, -7], [0.35, 26, -2.5], [0.55, 21, -1], [0.84, 8, -1], [1, 3, 0]],
+    x: [[0, 3, 22], [1, 4, 20]], a: [[0, 3, -22], [1, 4, -21]], b: [[0, 19, 17], [0.7, 22, 18], [1, 23, 17]], screens: [[0.35, 's', 'h']] },
+  pnp: { h: [[0, 27, 0], [0.35, 28, -1], [0.62, 18, -7], [0.82, 13, -8], [1, 13, -9]], s: [[0, 14, 7], [0.35, 26, 2.5], [0.6, 24, 7], [0.82, 23, 11], [1, 23, 12]],
+    x: [[0, 3, -22], [1, 3, -22]], a: [[0, 3, 22], [1, 4, 22]], b: [[0, 19, -17], [0.7, 22, -18], [1, 22, -18]], screens: [[0.35, 's', 'h']] },
+  iso: { h: [[0, 26, 10], [0.35, 24, 12], [0.55, 23, 11], [0.8, 15, 7], [1, 9, 4]], s: [[0, 10, -6], [0.3, 5, -18], [1, 5, -18]],
+    x: [[0, 3, -22], [1, 3, -22]], a: [[0, 19, -17], [1, 20, -18]], b: [[0, 26, -4], [0.35, 27, -9], [1, 27, -9]], screens: [] },
+  post: { h: [[0, 26, 10], [0.3, 20, 17], [0.6, 21, 18], [1, 23, 19]], x: [[0, 13, 10], [0.3, 6, 8], [0.6, 5, 7], [0.85, 4, 5], [1, 3, 3]],
+    s: [[0, 14, -6], [0.4, 19, -17], [1, 19, -17]], a: [[0, 3, -22], [1, 3, -22]], b: [[0, 27, -2], [0.5, 26, -4], [1, 26, -4]], screens: [] },
+  dk: { h: [[0, 28, 0], [0.35, 25, -4], [0.7, 10, -3], [0.85, 8, -2], [1, 8, -1]], x: [[0, 3, 22], [1, 3, 22]],
+    s: [[0, 6, -8], [0.6, 4, -12], [1, 4, -12]], a: [[0, 19, -17], [0.6, 21, -19], [1, 21, -19]], b: [[0, 19, 17], [0.7, 23, 14], [1, 24, 13]], screens: [] },
+  givego: { h: [[0, 26, -6], [0.3, 25, -6], [0.5, 21, -4], [0.8, 7, -3], [1, 3, -1]], x: [[0, 19, -17], [0.3, 20, -16], [1, 20, -16]],
+    s: [[0, 8, 8], [0.5, 12, 14], [1, 12, 15]], a: [[0, 3, 22], [1, 3, 22]], b: [[0, 25, 12], [1, 26, 10]], screens: [] },
+  backdoor: { h: [[0, 27, 0], [0.4, 27, -3], [1, 26, -8]], s: [[0, 12, 4], [0.3, 19, 5], [1, 19, 5]],
+    x: [[0, 19, 17], [0.45, 23, 19], [0.6, 22, 18], [0.8, 7, 6], [1, 2, 2]], a: [[0, 19, -17], [1, 19, -17]], b: [[0, 3, -22], [1, 3, -22]], screens: [] },
+  floppy: { h: [[0, 28, -2], [0.5, 27, -4], [1, 26, -5]], x: [[0, 3, 0], [0.35, 3, 3], [0.6, 7, 11], [0.85, 19, 17], [1, 20, 17]],
+    s: [[0, 6, -8], [1, 6, -8]], a: [[0, 6, 8], [0.5, 8, 9], [1, 8, 9]], b: [[0, 19, -17], [1, 20, -17]], screens: [[0.55, 'a', 'x']] },
+  elevator: { h: [[0, 26, 14], [0.5, 24, 16], [1, 24, 16]], x: [[0, 4, -3], [0.4, 10, 0], [0.6, 21, 0], [0.72, 26, 0], [1, 27, 0]],
+    s: [[0, 21, -6], [0.55, 22, -4], [0.75, 22, -1.5], [1, 22, -1.5]], a: [[0, 21, 6], [0.55, 22, 4], [0.75, 22, 1.5], [1, 22, 1.5]],
+    b: [[0, 3, 22], [1, 3, 22]], screens: [[0.75, 's', 'x'], [0.75, 'a', 'x']] },
+  dho: { h: [[0, 27, 6], [0.25, 22, 14], [1, 19, 17]], s: [[0, 22, -3], [0.2, 25, -5], [1, 25, -5]],
+    x: [[0, 19, -17], [0.45, 23, -9], [0.6, 24, -3], [0.85, 20, 1], [1, 17, 3]], a: [[0, 3, -22], [1, 3, -22]], b: [[0, 5, 8], [1, 5, 8]], screens: [[0.55, 's', 'x']] },
+  horns: { h: [[0, 28, 0], [0.4, 28, -1], [0.65, 20, 9], [0.85, 15, 10], [1, 13, 10]], s: [[0, 20, 6], [0.4, 26, 2.5], [0.65, 14, 3], [1, 6, 2]],
+    a: [[0, 20, -6], [0.65, 22, -8], [1, 24, -10]], x: [[0, 3, 22], [1, 3, 22]], b: [[0, 3, -22], [1, 3, -22]], screens: [[0.4, 's', 'h']] },
+  spain: { h: [[0, 28, 0], [0.35, 28, 1], [0.6, 20, 7], [0.82, 15, 8], [1, 14, 8]], s: [[0, 15, -5], [0.35, 26, -2.5], [0.55, 20, -1], [0.8, 8, -1], [1, 3, 0]],
+    x: [[0, 12, 4], [0.4, 19, 1], [0.6, 19, -1], [0.82, 25, -4], [1, 25, -5]], a: [[0, 3, -22], [1, 3, -22]], b: [[0, 3, 22], [1, 3, 22]],
+    screens: [[0.35, 's', 'h'], [0.6, 'x', 's']] },
+  motion: { h: [[0, 27, 0], [0.25, 26, 2], [0.5, 8, 2], [0.7, 19, 17], [1, 19, 17]], a: [[0, 19, -17], [0.2, 20, -16], [0.4, 24, -9], [1, 25, -8]],
+    s: [[0, 3, -22], [0.35, 15, -17], [0.45, 19, -17], [1, 19, -17]], b: [[0, 19, 17], [0.5, 25, 6], [0.65, 27, 2], [1, 27, 0]],
+    x: [[0, 3, 22], [0.6, 3, 22], [0.85, 20, 12], [1, 21, 12]], screens: [] },
+  alley: { h: [[0, 25, 14], [0.5, 24, 13], [1, 22, 12]], s: [[0, 14, -5], [0.45, 21, -3], [0.7, 8, 1], [0.85, 3, 1], [1, 2, 0]],
+    x: [[0, 3, -22], [1, 3, -22]], a: [[0, 3, 22], [1, 3, 22]], b: [[0, 19, -17], [1, 20, -17]], screens: [] },
+  fast: { h: [[0, 40, 0], [0.6, 18, 1], [1, 6, 1]], x: [[0, 42, -12], [0.7, 12, -16], [1, 4, -20]], s: [[0, 50, 8], [1, 26, 6]],
+    a: [[0, 44, 14], [1, 16, 18]], b: [[0, 60, -4], [1, 34, -3]], screens: [] }
+};
+const ease = k => k * k * (3 - 2 * k);
+function kfAt(track, u) {
+  if (u <= track[0][0]) return track[0];
+  for (let i = 1; i < track.length; i++) if (u <= track[i][0]) {
+    const a = track[i - 1], b = track[i], e = ease((u - a[0]) / (b[0] - a[0]));
+    return [u, a[1] + (b[1] - a[1]) * e, a[2] + (b[2] - a[2]) * e];
+  }
+  return track[track.length - 1];
+}
 function basketFor(side, period) { return BASKET[(side + (period >= 3 ? 1 : 0)) % 2]; }
-function evAt(t, kinds) { let last = null; cur.tl.forEach(e => { if (e.t <= t && (!kinds || kinds.includes(e.k))) last = e; }); return last; }
+function curPlay() {                       // the set being run right now (the first one while the ball comes up)
+  if (!cur) return null;
+  let pl = null; for (const e of cur.tl) if (e.k === 'play' && e.t <= pt + 1e-6) pl = e;
+  return pl || cur.tl.find(e => e.k === 'play') || null;
+}
+const playU = pl => clamp((pt - pl.t) / Math.max(0.5, pl.end - pl.t), 0, 1);
+let segPlay = null, segFrom = {}, lastPt = 0;
 function computePositions() {
   if (!cur) return;
   const off = cur.off, B = basketFor(off, cur.period), dir = B.x > 47 ? -1 : 1;
   const O = lineups[off], D = lineups[1 - off];
+  const play = curPlay(), first = !play || play === cur.tl.find(e => e.k === 'play');
+  if (play !== segPlay) { segPlay = play; segFrom = {}; Object.keys(pos).forEach(id => { segFrom[id] = { x: pos[id].x, y: pos[id].y }; }); }
+  const M = play && PLAYS[play.id], kf = M && M.kf ? KF[M.kf] : null, u = play ? playU(play) : 0;
+  const slotOf = {}; if (play) Object.keys(play.roles).forEach(sl => { slotOf[play.roles[sl]] = sl; });
   const ftEv = cur.tl.find(e => e.k === 'ft' && pt >= e.t - 1.6 && pt <= e.t + 0.2);
-  const shot = cur.tl.find(e => e.k === 'shot');
+  const shot = play ? cur.tl.find(e => e.k === 'shot' && e.t >= play.t - 0.01) : null;
   const reb = cur.tl.find(e => e.k === 'reb' && pt >= e.t - 1 && pt <= e.t + 0.6);
   const target = {};
   const wob = (i, a) => Math.sin(pt * (0.7 + i * 0.13) + i * 1.7) * a;
   O.forEach((p, i) => {
-    const s = SPOTS[POS[i]] || [15, 0];
-    let x = B.x + dir * s[0] + wob(i, 2.2), y = B.y + s[1] + wob(i + 3, 2.6);
-    if (shot && p.id === shot.p && pt > shot.t - 1.4 && pt <= shot.t + 0.3) {
-      const k = clamp((pt - (shot.t - 1.4)) / 1.2, 0, 1);
-      x = x + (shot.x - x) * k; y = y + (shot.y - y) * k;
+    const sl = slotOf[p.id];
+    let x, y;
+    if (kf && sl && kf[sl]) { const q = kfAt(kf[sl], u); x = B.x + dir * q[1]; y = B.y + play.flip * q[2]; }
+    else if (play && !kf && segFrom[p.id]) { x = segFrom[p.id].x; y = segFrom[p.id].y; }        // a putback: everyone is already in there
+    else { const sp = SPOTS[POS[i]] || [15, 0]; x = B.x + dir * sp[0]; y = B.y + sp[1]; }
+    x += wob(i, 0.5); y += wob(i + 3, 0.5);
+    if (shot && p.id === shot.p && pt > shot.t - 1.2) {                                         // the finisher gets to the shot spot
+      const k = clamp((pt - (shot.t - 1.2)) / 1.0, 0, 1);
+      x += (shot.x - x) * k; y += (shot.y - y) * k;
     }
-    target[p.id] = { x, y };
+    target[p.id] = { x: clamp(x, 1, 93), y: clamp(y, 1, 49) };
   });
   D.forEach((p, i) => {
     const m = target[O[i].id];
@@ -368,12 +431,21 @@ function computePositions() {
     });
   }
   if (reb) { const ball = { x: B.x + dir * 4, y: 25 }; target[reb.p] = { x: ball.x + dir * 2, y: ball.y + (reb.p % 2 ? 2 : -2) }; }
-  // transition from where they were when the possession started
-  const tr = cur.transition || 3, k = clamp(pt / tr, 0, 1), e = k * k * (3 - 2 * k);
+  // screens: the defender of the screened player gets hung up for a moment
+  const stuck = new Set();
+  if (kf) kf.screens.forEach(([us, , who]) => {
+    if (u >= us - 0.03 && u <= us + 0.25) { const i = O.findIndex(q => q.id === play.roles[who]); if (i >= 0 && D[i]) stuck.add(D[i].id); }
+  });
+  const dt = pt >= lastPt ? pt - lastPt : 0; lastPt = pt;
+  const e = first ? ease(clamp(pt / (cur.transition || 3), 0, 1)) : ease(clamp((pt - play.t) / 1.2, 0, 1));
+  const from0 = first ? lastPos : segFrom, defIds = new Set(D.map(q => q.id));
   Object.keys(target).forEach(id => {
-    const from = lastPos[id] || target[id], to = target[id];
-    const p = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e };
-    const prev = pos[id];
+    const from = from0[id] || target[id], to = target[id], prev = pos[id];
+    let p = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e };
+    if (defIds.has(id) && prev && e >= 1 && !ftEv) {                                           // defenders react a beat late
+      const k = 1 - Math.exp(-dt * (stuck.has(id) ? 0.7 : 5));
+      p = { x: prev.x + (p.x - prev.x) * k, y: prev.y + (p.y - prev.y) * k };
+    }
     p.moving = prev ? Math.hypot(p.x - prev.x, p.y - prev.y) > 0.02 : false;
     p.face = prev && Math.abs(p.x - prev.x) > 0.01 ? Math.sign(p.x - prev.x) : prev ? prev.face : 1;
     pos[id] = p;
@@ -386,7 +458,7 @@ function computeBall() {
   let holder = null, ball = null;
   for (const e of evs) {
     if (e.k === 'hold') holder = e.p;
-    if (e.k === 'pass') { if (pt < e.t + e.dur) { const a = pos[e.from], b = pos[e.to]; if (a && b) { const k = (pt - e.t) / e.dur; ball = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, h: 4 + Math.sin(k * Math.PI) * 3 }; } holder = null; } else { holder = e.to; ball = null; } }
+    if (e.k === 'pass') { if (pt < e.t + e.dur) { const a = pos[e.from], b = pos[e.to]; if (a && b) { const k = (pt - e.t) / e.dur; ball = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, h: 4 + Math.sin(k * Math.PI) * (e.lob ? 10 : 3) }; } holder = null; } else { holder = e.to; ball = null; } }
     if (e.k === 'shot') {
       const fl = e.dur, k = (pt - e.t) / fl, a = pos[e.p];
       if (k < 1 && a) { ball = { x: a.x + (B.x - a.x) * k, y: a.y + (B.y - a.y) * k, h: 8 + (RIM - 8) * k + Math.sin(k * Math.PI) * (e.type === 'three' ? 11 : 7) }; holder = null; }
@@ -592,6 +664,90 @@ function jumbotron() {                    // the scoreboard hanging over centre 
   for (let i = 0; i < 18; i++) { g.fillStyle = (i + t) % 3 ? '#ffd23a' : home.main; g.fillRect(x0 - 2 + i * 4.22, y0 + h + 3.4, 3, 1.1); }
 }
 const overlays = [];
+function playBanner() {                    // the name of the set being run, top left of the court
+  const pl = curPlay(); if (!pl) return;
+  const M = PLAYS[pl.id], team = teams[cur.off], name = M.name[lang], sub = M.name[lang === 'zh' ? 'en' : 'zh'];
+  const head = T('playLabel') + ' · ' + (team.name[lang] || team.name.zh);
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  g.font = 'bold 7px sans-serif'; const w1 = g.measureText(name).width;
+  g.font = '4px sans-serif'; const w2 = Math.max(g.measureText(sub).width, g.measureText(head).width);
+  const w = Math.max(w1, w2) + 12, x = 5, y = 5;
+  g.fillStyle = 'rgba(8,10,22,0.82)'; g.fillRect(x, y, w, 23);
+  g.fillStyle = team.main; g.fillRect(x, y, 2, 23);
+  g.font = 'bold 4px sans-serif'; g.fillStyle = shade(team.main, 0.45); g.fillText(head, x + 6, y + 6.5);
+  g.font = 'bold 7px sans-serif'; g.fillStyle = '#ffd23a'; g.fillText(name, x + 6, y + 14.5);
+  g.font = '4px sans-serif'; g.fillStyle = '#b8c0d8'; g.fillText(sub, x + 6, y + 20);
+  g.fillStyle = 'rgba(255,255,255,0.15)'; g.fillRect(x + 2, y + 22, w - 2, 1);
+  g.fillStyle = team.main; g.fillRect(x + 2, y + 22, (w - 2) * playU(pl), 1);
+}
+
+// ---- the playbook panel: the set drawn as a coach's diagram, with everyone moving through it ----
+const pbc = $('pbBoard'), pg = pbc.getContext('2d');
+let pbShown;
+function pbText(pl) {
+  if (!pl) { $('pbName').textContent = '—'; $('pbDesc').textContent = T('pbWait'); $('pbRoles').innerHTML = ''; return; }
+  const M = PLAYS[pl.id], team = teams[cur.off], L = lineups[cur.off];
+  $('pbName').innerHTML = '<span style="color:' + team.main + '">■</span> ' + esc(M.name[lang]) + ' <small>' + esc(M.name[lang === 'zh' ? 'en' : 'zh']) + '</small>';
+  $('pbDesc').textContent = M.desc[lang];
+  $('pbRoles').innerHTML = L.map((p, i) => '<span class="' + (p.id === pl.roles[M.sh] ? 'sh' : '') + '"><b>' + (i + 1) + '</b>' + esc(nm(p)) + '</span>').join('');
+}
+function pbArrow(x1, y1, x2, y2, col, dashed) {
+  const a = Math.atan2(y2 - y1, x2 - x1);
+  pg.strokeStyle = col; pg.fillStyle = col; pg.lineWidth = 2.4; pg.setLineDash(dashed ? [6, 5] : []);
+  pg.beginPath(); pg.moveTo(x1, y1); pg.lineTo(x2 - Math.cos(a) * 6, y2 - Math.sin(a) * 6); pg.stroke(); pg.setLineDash([]);
+  pg.beginPath(); pg.moveTo(x2, y2); pg.lineTo(x2 - Math.cos(a - 0.45) * 11, y2 - Math.sin(a - 0.45) * 11); pg.lineTo(x2 - Math.cos(a + 0.45) * 11, y2 - Math.sin(a + 0.45) * 11); pg.closePath(); pg.fill();
+}
+function drawPlaybook() {
+  if (!cur && pbShown !== undefined) return;            // between possessions keep the last diagram
+  const pl = cur ? curPlay() : null;
+  if (pl !== pbShown) { pbShown = pl; pbText(pl); }
+  const Wb = pbc.width, Hb = pbc.height, K = 7.2, cx = Wb / 2, y0 = 46;
+  const X = ac => cx + ac * K, Y = al => y0 + al * K;
+  pg.setTransform(1, 0, 0, 1, 0, 0);
+  pg.fillStyle = '#d6a064'; pg.fillRect(0, 0, Wb, Hb);
+  for (let i = 0; i < Wb; i += 12) { pg.fillStyle = (i / 12) % 2 ? 'rgba(120,60,20,0.07)' : 'rgba(255,240,210,0.07)'; pg.fillRect(i, 0, 12, Hb); }
+  const home = teams[1];
+  pg.fillStyle = home.main; pg.globalAlpha = 0.35; pg.fillRect(X(-8), Y(-5.25), 16 * K, 19 * K); pg.globalAlpha = 1;
+  pg.strokeStyle = '#fff'; pg.lineWidth = 2;
+  pg.strokeRect(X(-25), Y(-5.25), 50 * K, 47 * K); pg.strokeRect(X(-8), Y(-5.25), 16 * K, 19 * K);
+  pg.beginPath(); pg.arc(X(0), Y(13.75), 6 * K, 0, Math.PI * 2); pg.stroke();
+  const a3 = Math.acos(22 / 23.75);
+  pg.beginPath(); pg.moveTo(X(-22), Y(-5.25)); pg.lineTo(X(-22), Y(Math.sin(a3) * 23.75)); pg.arc(X(0), Y(0), 23.75 * K, Math.PI - a3, a3, true); pg.lineTo(X(22), Y(-5.25)); pg.stroke();
+  pg.beginPath(); pg.arc(X(0), Y(0), 4 * K, 0, Math.PI); pg.stroke();
+  pg.beginPath(); pg.arc(X(0), Y(41.75), 6 * K, Math.PI, 0); pg.stroke();
+  pg.lineWidth = 3; pg.beginPath(); pg.moveTo(X(-3), Y(-1.25)); pg.lineTo(X(3), Y(-1.25)); pg.stroke();
+  pg.strokeStyle = '#ff5a1a'; pg.lineWidth = 2; pg.beginPath(); pg.arc(X(0), Y(0), 0.9 * K, 0, Math.PI * 2); pg.stroke();
+  if (!pl) return;
+  const M = PLAYS[pl.id], kf = M.kf && KF[M.kf], team = teams[cur.off], L = lineups[cur.off];
+  const num = id => L.findIndex(q => q.id === id) + 1;
+  const at = (sl, u) => { const q = kfAt(kf[sl], u); return [X(q[2] * pl.flip), Y(q[1])]; };
+  pg.textAlign = 'center'; pg.textBaseline = 'middle';
+  if (!kf) { pg.fillStyle = 'rgba(10,10,20,0.75)'; pg.font = 'bold 22px sans-serif'; pg.fillText(M.name[lang], cx, Hb * 0.55); return; }
+  Object.keys(pl.roles).forEach(sl => {                  // cuts
+    if (!kf[sl]) return;
+    const col = sl === M.sh ? '#c8102e' : '#1d2333', pts = [];
+    for (let i = 0; i <= 40; i++) pts.push(at(sl, i / 40));
+    const [ex, ey] = pts[40], [bx, by] = pts[37];
+    if (Math.hypot(ex - pts[0][0], ey - pts[0][1]) < 6) return;
+    pg.strokeStyle = col; pg.lineWidth = 2.4; pg.beginPath(); pts.slice(0, 38).forEach(([x, y], i) => i ? pg.lineTo(x, y) : pg.moveTo(x, y)); pg.stroke();
+    pbArrow(bx, by, ex, ey, col);
+  });
+  kf.screens.forEach(([us, who, on]) => {                // screens as a T
+    const [sx, sy] = at(who, us), [tx, ty] = at(on, us - 0.08), a = Math.atan2(ty - sy, tx - sx), px2 = -Math.sin(a), py2 = Math.cos(a);
+    pg.strokeStyle = '#1d2333'; pg.lineWidth = 4;
+    pg.beginPath(); pg.moveTo(sx + Math.cos(a) * 12 + px2 * 11, sy + Math.sin(a) * 12 + py2 * 11); pg.lineTo(sx + Math.cos(a) * 12 - px2 * 11, sy + Math.sin(a) * 12 - py2 * 11); pg.stroke();
+  });
+  M.passes.forEach(([up, f, t2]) => { const [x1, y1] = at(f, up), [x2, y2] = at(t2, up); pbArrow(x1, y1, x2, y2, '#2850c8', true); });
+  const u = playU(pl), holderSlot = Object.keys(pl.roles).find(sl => pl.roles[sl] === ballPos.holder);
+  Object.keys(pl.roles).forEach(sl => {                  // everyone where they are right now
+    if (!kf[sl]) return;
+    const [x, y] = at(sl, u);
+    pg.fillStyle = sl === M.sh ? '#ffd23a' : '#ffffff'; pg.strokeStyle = team.main; pg.lineWidth = 3;
+    pg.beginPath(); pg.arc(x, y, 11, 0, Math.PI * 2); pg.fill(); pg.stroke();
+    pg.fillStyle = '#111'; pg.font = 'bold 13px sans-serif'; pg.fillText(String(num(pl.roles[sl])), x, y + 1);
+    if (sl === holderSlot) { pg.fillStyle = '#e8742a'; pg.strokeStyle = '#4a1e06'; pg.lineWidth = 1.5; pg.beginPath(); pg.arc(x + 10, y - 10, 5, 0, Math.PI * 2); pg.fill(); pg.stroke(); }
+  });
+}
 function draw() {
   g.setTransform(1, 0, 0, 1, 0, 0);
   if (!arenaImgs) { floorProj = projectFloor(); arenaImgs = [buildArena(false), buildArena(true)]; }
@@ -617,6 +773,7 @@ function draw() {
   // crisp labels on top of everything
   g.setTransform(S, 0, 0, S, 0, 0);
   overlays.forEach(o => o());
+  playBanner();
   g.textAlign = 'center'; g.textBaseline = 'bottom'; g.font = 'bold 7px sans-serif';
   popups.forEach(o => {
     const q = P(o.x, o.y, 0), y = q.y - 30 - o.age * 4;
@@ -645,6 +802,7 @@ function liveScore() {
 function tick(dt) {
   if (!playing || !game) return;
   if (!cur && !startPossession()) return;
+  const ptPrev = pt;
   pt += dt * speed * 1.6;
   popups.forEach(o => { o.age += dt * speed * 1.6 / 2.5; });          // pop-ups fade with game time, so they never pile up
   popups = popups.filter(o => o.age < 1.6);
@@ -655,6 +813,11 @@ function tick(dt) {
     if (label && at) { if (popups.length >= 4) popups.shift(); } if (e.k === 'make') cheerUntil = performance.now() + 1800;
     if (label && at) popups.push({ text: label, x: at.x, y: at.y, age: 0, color: e.k === 'make' ? '#ffe14a' : e.k === 'block' || e.k === 'steal' ? '#7ae0ff' : e.k === 'foul' ? '#ff7a7a' : '#ffffff' });
   }
+  const pl = curPlay(), PK = pl && PLAYS[pl.id].kf && KF[PLAYS[pl.id].kf];
+  if (PK) PK.screens.forEach(([us, who]) => {                         // call out each screen as it is set
+    const ts = pl.t + us * Math.max(0.5, pl.end - pl.t), at = pos[pl.roles[who]];
+    if (ts > ptPrev && ts <= pt && at) { if (popups.length >= 4) popups.shift(); popups.push({ text: T('screen'), x: at.x, y: at.y, age: 0, color: '#9dffb0' }); }
+  });
   // play-by-play lines when their moment comes
   while (logShown < cur.log.length && cur.log[logShown].t != null && cur.log[logShown].t <= pt) showEvent(cur.log[logShown++]);   // undated events (subs, period end) wait for the end
   if (pt >= cur.dur + 0.6) {
@@ -672,6 +835,7 @@ function frame(now) {
   tick(dt);
   if (cur) { computePositions(); computeBall(); }
   draw();
+  drawPlaybook();
   renderBoard();
   requestAnimationFrame(frame);
 }
@@ -688,6 +852,7 @@ function addLog(o) {
 function eventText(e) {
   const E = TX[lang].ev;
   if (e.k === 'periodEnd' || e.k === 'final') return null;
+  if (e.k === 'play') return '<span class="pl">' + T('playRun') + esc(PLAYS[e.play].name[lang]) + '</span>';
   if (e.k === 'sub') return E.sub(null, { innName: nm(e.inn) + (e.inn.star ? '★' : ''), outName: nm(e.out) });
   const f = E[e.k]; if (!f) return null;
   return f(esc(nm(e.p)) + (e.p.star ? '★' : ''), Object.assign({}, e, { by: e.by && nm(e.by), ast: e.ast && nm(e.ast) }));
@@ -775,7 +940,7 @@ function renderAll() {
   document.title = T('title') + ' · ' + (lang === 'zh' ? 'Pixel Hoops' : '像素籃球');
   $('sim').textContent = T('sim'); $('next').textContent = T('next'); $('newTeams').textContent = T('newTeams'); $('lang').textContent = T('lang'); $('fx').textContent = T('fx')(fxOn && canFilter); $('fx').disabled = !canFilter;
   setPlaying(playing);
-  arenaImgs = null; renderBoard.last = null; renderBoard.cards = null;
+  arenaImgs = null; pbShown = undefined; renderBoard.last = null; renderBoard.cards = null;
   renderSide();
 }
 function endGame() {
