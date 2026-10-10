@@ -107,7 +107,7 @@ function setPlaying(on) {
 
 // ---------------- the court ----------------
 const cv = $('court'), g = cv.getContext('2d');
-const S = 3;                              // device pixels per logical pixel
+const S = 4;                              // device pixels per logical pixel (sprites use half pixels: 2 device pixels each)
 const W = 320, H = 176, FT = 3.2, OX = 9.6, OY = 8;   // logical size; feet → logical pixels
 const px = x => OX + x * FT, py = y => OY + y * FT;
 g.imageSmoothingEnabled = false;
@@ -238,23 +238,117 @@ function placeInitial() {          // a jump ball at center court
   ballPos = { x: 47, y: 25, h: 8 };
 }
 
+// ---------------- players: big-headed pixel sprites, each with their own look ----------------
+// A sprite is painted at twice the court's pixel detail (each sprite pixel = half a court pixel), then cached.
+const SKINS = ['#f6d3b3', '#eab68c', '#cf9566', '#a06842', '#6f4529'];
+const HAIRS = ['#1b1410', '#3a2414', '#6a3e1e', '#c8962e', '#a4381c', '#e8e2d8'];
+const STYLES = ['short', 'buzz', 'afro', 'spiky', 'bun', 'mohawk', 'bald', 'long', 'rows'];
+const SHOES = ['#f4f4f4', '#202020', '#e03030', '#2f6fde', '#30c060', '#f0a020', '#ff7ab8'];
+// the four super players always look the same
+const STAR_LOOK = {
+  'Josh Chen':   { skin: 1, hair: 1, style: 'short', band: '#2e9e44' },
+  'Jasper Chen': { skin: 1, hair: 0, style: 'spiky', band: null },
+  'Jeff Chen':   { skin: 1, hair: 0, style: 'short', beard: true, goggles: true, band: null },
+  'Erin Lai':    { skin: 0, hair: 1, style: 'bun', band: '#ff7aa0', beard: false }
+};
+function look(p) {
+  if (p.look) return p.look;
+  let seed = (p.id * 2654435761) % 2147483647 || 7;
+  const r = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647; };
+  const L = { skin: Math.floor(r() * SKINS.length), hair: r() < 0.92 ? Math.floor(r() * 5) : 5, style: STYLES[Math.floor(r() * STYLES.length)],
+              beard: r() < 0.22, band: r() < 0.25 ? 'team' : null, goggles: r() < 0.07, sleeve: r() < 0.3, shoes: SHOES[Math.floor(r() * SHOES.length)] };
+  if (p.star) Object.assign(L, { beard: false, goggles: false, sleeve: false }, STAR_LOOK[p.name.en] || {}, { shoes: '#ffd23a' });
+  return (p.look = L);
+}
+const DIGITS = { 0: ['111', '101', '101', '101', '111'], 1: ['010', '110', '010', '010', '111'], 2: ['111', '001', '111', '100', '111'], 3: ['111', '001', '011', '001', '111'],
+  4: ['101', '101', '111', '001', '001'], 5: ['111', '100', '111', '001', '111'], 6: ['111', '100', '111', '101', '111'], 7: ['111', '001', '010', '010', '010'],
+  8: ['111', '101', '111', '101', '111'], 9: ['111', '101', '111', '001', '111'] };
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.round(f < 0 ? v * (1 + f) : v + (255 - v) * f));
+  return '#' + c.map(v => ('0' + v.toString(16)).slice(-2)).join('');
+}
+const spriteCache = {};
+function sprite(p, team, frame) {
+  const key = p.id + '|' + team.main + '|' + frame;
+  if (spriteCache[key]) return spriteCache[key];
+  const L = look(p), skin = SKINS[L.skin], skinD = shade(skin, -0.18), hair = HAIRS[L.hair], hairD = shade(hair, -0.35);
+  const extra = clamp(Math.round((p.hgt - 196) / 5), -1, 4);          // taller players get longer bodies
+  const Wd = 22, top = 5, hx = 5, hy = top, ty = hy + 12, sy = ty + 8, ly = sy + 4, legH = 3 + extra, Ht = ly + legH + 2 + 1;
+  const c = document.createElement('canvas'); c.width = Wd; c.height = Ht;
+  const x = c.getContext('2d');
+  const R = (a, b, w, h, col) => { if (!col) return; x.fillStyle = col; x.fillRect(a, b, w, h); };
+  const band = L.band === 'team' ? team.alt : L.band;
+  // ---- hair behind the head ----
+  if (L.style === 'afro') { x.fillStyle = hair; x.beginPath(); x.ellipse(hx + 6, hy + 3, 8.5, 6.5, 0, 0, Math.PI * 2); x.fill(); }
+  if (L.style === 'long') { R(hx - 1, hy + 2, 3, 10, hairD); R(hx + 10, hy + 2, 3, 10, hairD); }
+  if (L.style === 'bun') { x.fillStyle = hair; x.beginPath(); x.arc(hx + 6, hy - 2, 2.6, 0, Math.PI * 2); x.fill(); R(hx + 4, hy - 1, 4, 1, band || hairD); }
+  // ---- arms, body, legs ----
+  const step = frame % 2;
+  R(3, ty + 1, 3, 3, team.main); R(16, ty + 1, 3, 3, team.main);                                  // shoulders
+  R(3, ty + 4, 3, 4, skin); R(16, ty + 4, 3, 4, skinD);                                           // arms
+  if (L.sleeve) R(16, ty + 3, 3, 4, '#f4f4f4');
+  R(3, ty + 7 + (step ? 0 : 1), 3, 2, skin); R(16, ty + 7 + (step ? 1 : 0), 3, 2, skinD);           // hands swing
+  R(5, ty, 12, 8, team.main);                                                                      // jersey
+  R(5, ty, 1, 8, team.trim); R(16, ty, 1, 8, team.trim);
+  R(9, ty, 4, 1, skin); R(10, ty + 1, 2, 1, skin);                                                 // V-neck
+  const num = String(p.num), dw = num.length * 4 - 1, dx = 11 - Math.floor(dw / 2);
+  num.split('').forEach((d, i) => DIGITS[d].forEach((row, yy) => row.split('').forEach((b, xx) => { if (b === '1') R(dx + i * 4 + xx, ty + 2 + yy, 1, 1, team.alt); })));
+  R(5, sy, 12, 4, team.alt); R(5, sy, 12, 1, shade(team.alt, -0.25)); R(5, sy, 1, 4, team.main); R(16, sy, 1, 4, team.main);   // shorts
+  x.clearRect(10, sy + 3, 2, 1);
+  const l1 = step ? 1 : 0, l2 = step ? 0 : 1;                                                       // running legs
+  R(6, ly, 3, legH - l1, skin); R(13, ly, 3, legH - l2, skinD);
+  R(5, ly + legH - l1, 5, 2, L.shoes); R(12, ly + legH - l2, 5, 2, L.shoes);
+  R(5, ly + legH - l1 + 1, 5, 1, shade(L.shoes, -0.35)); R(12, ly + legH - l2 + 1, 5, 1, shade(L.shoes, -0.35));
+  // ---- the head (big) ----
+  R(hx, hy + 1, 12, 9, skin); R(hx + 1, hy, 10, 11, skin);
+  R(hx - 1, hy + 5, 1, 2, skin); R(hx + 12, hy + 5, 1, 2, skinD);                                  // ears
+  R(hx + 1, hy + 10, 10, 1, skinD);
+  // hair on top
+  if (L.style === 'short' || L.style === 'spiky' || L.style === 'bun' || L.style === 'long') { R(hx, hy, 12, 3, hair); R(hx + 1, hy - 1, 10, 1, hair); R(hx, hy + 3, 1, 2, hair); R(hx + 11, hy + 3, 1, 2, hair); R(hx + 2, hy, 3, 1, shade(hair, 0.25)); }
+  if (L.style === 'spiky') for (let k = 0; k < 4; k++) { R(hx + 1 + k * 3, hy - 2, 2, 1, hair); R(hx + 2 + k * 3, hy - 3, 1, 1, hair); }
+  if (L.style === 'buzz') { R(hx + 1, hy, 10, 2, hairD); R(hx, hy + 1, 12, 1, hairD); }
+  if (L.style === 'rows') { R(hx, hy, 12, 3, hair); for (let k = 1; k < 12; k += 2) R(hx + k, hy, 1, 3, hairD); }
+  if (L.style === 'mohawk') { R(hx + 4, hy - 3, 4, 6, hair); R(hx + 5, hy - 3, 1, 5, shade(hair, 0.3)); }
+  if (L.style === 'afro') { R(hx + 1, hy + 3, 10, 1, hair); }
+  if (L.style === 'bald') { R(hx + 3, hy + 1, 2, 1, shade(skin, 0.45)); }
+  if (band) { R(hx, hy + 3, 12, 1, band); R(hx + 11, hy + 3, 2, 2, band); }
+  // face
+  R(hx + 2, hy + 4, 3, 1, hairD); R(hx + 7, hy + 4, 3, 1, hairD);                                // eyebrows
+  if (L.goggles) { R(hx + 1, hy + 4, 10, 4, '#2a2a34'); R(hx + 2, hy + 5, 3, 2, '#9ad8ff'); R(hx + 7, hy + 5, 3, 2, '#9ad8ff'); }
+  R(hx + 3, hy + 5, 2, 2, '#1a1420'); R(hx + 7, hy + 5, 2, 2, '#1a1420');                          // eyes
+  R(hx + 3, hy + 5, 1, 1, '#ffffff'); R(hx + 7, hy + 5, 1, 1, '#ffffff');
+  R(hx + 1, hy + 7, 2, 1, 'rgba(255,110,120,0.45)'); R(hx + 9, hy + 7, 2, 1, 'rgba(255,110,120,0.45)');   // cheeks
+  if (L.beard) { R(hx, hy + 6, 1, 4, hair); R(hx + 11, hy + 6, 1, 4, hair); R(hx + 1, hy + 8, 10, 3, hair); R(hx + 4, hy + 8, 4, 1, skin); }
+  R(hx + 5, hy + 8, 2, 1, L.beard ? '#e8a0a0' : '#8a3a3a');                                      // mouth
+  // ---- a dark outline around the whole player ----
+  const id = x.getImageData(0, 0, Wd, Ht), d = id.data, src = new Uint8ClampedArray(d);
+  for (let yy = 0; yy < Ht; yy++) for (let xx = 0; xx < Wd; xx++) {
+    const i = (yy * Wd + xx) * 4;
+    if (src[i + 3] > 40) continue;
+    const near = (xx > 0 && src[i - 1] > 40) || (xx < Wd - 1 && src[i + 7] > 40) || (yy > 0 && src[i - Wd * 4 + 3] > 40) || (yy < Ht - 1 && src[i + Wd * 4 + 3] > 40);
+    if (near) { d[i] = 20; d[i + 1] = 16; d[i + 2] = 24; d[i + 3] = 255; }
+  }
+  x.putImageData(id, 0, 0);
+  return (spriteCache[key] = c);
+}
 function drawPlayer(p, team, at, hasBall) {
-  const x = Math.round(px(at.x)), y = Math.round(py(at.y));
-  const step = at.moving ? Math.floor(performance.now() / 120) % 2 : 0;
-  g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x - 3, y + 1, 7, 2);
-  // legs
-  g.fillStyle = '#5a3a24'; g.fillRect(x - 2, y - 2 + (step ? 1 : 0), 1, 3 - (step ? 1 : 0)); g.fillRect(x + 1, y - 2 + (step ? 0 : 1), 1, 3 - (step ? 0 : 1));
-  // shorts and jersey
-  g.fillStyle = team.alt; g.fillRect(x - 2, y - 4, 5, 2);
-  g.fillStyle = team.main; g.fillRect(x - 2, y - 9, 5, 5);
-  g.fillStyle = team.trim; g.fillRect(x - 2, y - 9, 5, 1); g.fillRect(x, y - 7, 1, 2);
-  // arms
-  g.fillStyle = '#c88a5a'; g.fillRect(x - 3, y - 8, 1, 3); g.fillRect(x + 3, y - 8, 1, 3);
-  // head
-  g.fillStyle = '#e0a874'; g.fillRect(x - 1, y - 12, 3, 3);
-  g.fillStyle = '#2a1a10'; g.fillRect(x - 1, y - 13, 3, 1);
-  if (p.star) { g.fillStyle = '#ffd23a'; g.fillRect(x, y - 16, 1, 1); g.fillRect(x - 1, y - 15, 3, 1); g.fillRect(x, y - 14, 1, 1); }
-  if (hasBall) { g.strokeStyle = '#ffe14a'; g.lineWidth = 0.6; g.strokeRect(x - 3.5, y - 13.5, 8, 15); }
+  const step = at.moving ? Math.floor(performance.now() / 110) % 2 + 1 : 0;
+  const img = sprite(p, team, step), w = img.width / 2, h = img.height / 2;
+  const fx = Math.round(px(at.x) * 2) / 2, fy = Math.round(py(at.y) * 2) / 2;
+  // shadow (stars stand in a golden glow)
+  g.fillStyle = p.star ? 'rgba(255,210,60,0.45)' : 'rgba(0,0,0,0.3)';
+  g.beginPath(); g.ellipse(fx, fy + 0.5, p.star ? 5.5 : 4.5, 1.6, 0, 0, Math.PI * 2); g.fill();
+  g.drawImage(img, fx - w / 2, fy - h + 1, w, h);
+  const head = fy - h + 1;
+  if (p.star) { g.fillStyle = '#ffd23a'; g.fillRect(fx - 0.5, head - 3, 1, 1); g.fillRect(fx - 1.5, head - 2, 3, 1); g.fillRect(fx - 0.5, head - 1, 1, 1); }
+  if (hasBall) {
+    g.fillStyle = '#ffe14a'; g.beginPath(); g.moveTo(fx - 2, head - 6); g.lineTo(fx + 2, head - 6); g.lineTo(fx, head - 3.5); g.fill();
+    const label = lang === 'en' ? p.name.en.split(' ').pop() : p.name.zh;
+    g.font = 'bold 4px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'bottom';
+    const tw = g.measureText(label).width + 3;
+    g.fillStyle = 'rgba(10,10,20,0.75)'; g.fillRect(fx - tw / 2, head - 11, tw, 5);
+    g.fillStyle = p.star ? '#ffd23a' : '#ffffff'; g.fillText(label, fx, head - 6.4);
+  }
 }
 function draw() {
   g.setTransform(S, 0, 0, S, 0, 0);
