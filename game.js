@@ -107,7 +107,8 @@ function setPlaying(on) {
 
 // ---------------- the court ----------------
 const cv = $('court'), g = cv.getContext('2d');
-const S = 4;                              // device pixels per logical pixel (sprites use half pixels: 2 device pixels each)
+const S = 4;
+const PZ = 0.75;                         // sprite pixel = PZ logical px (3 device px) — big chibi players                              // device pixels per logical pixel (sprites use half pixels: 2 device pixels each)
 const W = 320, H = 176, FT = 3.2, OX = 9.6, OY = 8;   // logical size; feet → logical pixels
 const px = x => OX + x * FT, py = y => OY + y * FT;
 g.imageSmoothingEnabled = false;
@@ -333,21 +334,22 @@ function sprite(p, team, frame) {
 }
 function drawPlayer(p, team, at, hasBall) {
   const step = at.moving ? Math.floor(performance.now() / 110) % 2 + 1 : 0;
-  const img = sprite(p, team, step), w = img.width / 2, h = img.height / 2;
-  const fx = Math.round(px(at.x) * 2) / 2, fy = Math.round(py(at.y) * 2) / 2;
+  const img = sprite(p, team, step), w = img.width * PZ, h = img.height * PZ;
+  const k = PZ * 2;                       // overlay scale to match the sprite
+  const fx = Math.round(px(at.x) * 4) / 4, fy = Math.round(py(at.y) * 4) / 4;
   // shadow (stars stand in a golden glow)
   g.fillStyle = p.star ? 'rgba(255,210,60,0.45)' : 'rgba(0,0,0,0.3)';
-  g.beginPath(); g.ellipse(fx, fy + 0.5, p.star ? 5.5 : 4.5, 1.6, 0, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(fx, fy + 0.5, (p.star ? 5.5 : 4.5) * k, 1.6 * k, 0, 0, Math.PI * 2); g.fill();
   g.drawImage(img, fx - w / 2, fy - h + 1, w, h);
   const head = fy - h + 1;
-  if (p.star) { g.fillStyle = '#ffd23a'; g.fillRect(fx - 0.5, head - 3, 1, 1); g.fillRect(fx - 1.5, head - 2, 3, 1); g.fillRect(fx - 0.5, head - 1, 1, 1); }
+  if (p.star) { g.fillStyle = '#ffd23a'; g.fillRect(fx - 0.5 * k, head - 3 * k, k, k); g.fillRect(fx - 1.5 * k, head - 2 * k, 3 * k, k); g.fillRect(fx - 0.5 * k, head - k, k, k); }
   if (hasBall) {
-    g.fillStyle = '#ffe14a'; g.beginPath(); g.moveTo(fx - 2, head - 6); g.lineTo(fx + 2, head - 6); g.lineTo(fx, head - 3.5); g.fill();
+    g.fillStyle = '#ffe14a'; g.beginPath(); g.moveTo(fx - 2 * k, head - 6 * k); g.lineTo(fx + 2 * k, head - 6 * k); g.lineTo(fx, head - 3.5 * k); g.fill();
     const label = lang === 'en' ? p.name.en.split(' ').pop() : p.name.zh;
-    g.font = 'bold 4px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'bottom';
-    const tw = g.measureText(label).width + 3;
-    g.fillStyle = 'rgba(10,10,20,0.75)'; g.fillRect(fx - tw / 2, head - 11, tw, 5);
-    g.fillStyle = p.star ? '#ffd23a' : '#ffffff'; g.fillText(label, fx, head - 6.4);
+    g.font = `bold ${4 * k}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'bottom';
+    const tw = g.measureText(label).width + 3 * k;
+    g.fillStyle = 'rgba(10,10,20,0.75)'; g.fillRect(fx - tw / 2, head - 11 * k, tw, 5 * k);
+    g.fillStyle = p.star ? '#ffd23a' : '#ffffff'; g.fillText(label, fx, head - 6.4 * k);
   }
 }
 function draw() {
@@ -360,12 +362,14 @@ function draw() {
   list.sort((a, b) => a.at.y - b.at.y).forEach(o => drawPlayer(o.p, o.team, o.at, ballPos.holder === o.p.id));
   // the ball and its shadow
   const bx = px(ballPos.x), by = py(ballPos.y);
-  g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(Math.round(bx) - 1, Math.round(by) + 1, 3, 1);
-  g.fillStyle = '#e8742a'; g.fillRect(Math.round(bx) - 1, Math.round(by - ballPos.h * FT * 0.6) - 1, 3, 3);
-  g.fillStyle = '#5a2a0a'; g.fillRect(Math.round(bx), Math.round(by - ballPos.h * FT * 0.6) - 1, 1, 3);
+  const bz = by - ballPos.h * FT * 0.6;
+  g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(bx, by + 1.5, 2.5, 1, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#e8742a'; g.beginPath(); g.arc(bx, bz, 2.25, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#5a2a0a'; g.lineWidth = 0.5; g.stroke();
+  g.beginPath(); g.moveTo(bx, bz - 2.25); g.lineTo(bx, bz + 2.25); g.moveTo(bx - 2.25, bz); g.lineTo(bx + 2.25, bz); g.stroke();
   // pop-up text
   g.textAlign = 'center'; g.textBaseline = 'bottom'; g.font = 'bold 7px sans-serif';
-  popups.forEach(o => { g.globalAlpha = clamp(1 - o.age / 1.6, 0, 1); g.fillStyle = '#000'; g.fillText(o.text, px(o.x) + 0.5, py(o.y) - 14 - o.age * 4 + 0.5); g.fillStyle = o.color; g.fillText(o.text, px(o.x), py(o.y) - 14 - o.age * 4); });
+  popups.forEach(o => { g.globalAlpha = clamp(1 - o.age / 1.6, 0, 1); g.fillStyle = '#000'; g.fillText(o.text, px(o.x) + 0.5, py(o.y) - 21 - o.age * 4 + 0.5); g.fillStyle = o.color; g.fillText(o.text, px(o.x), py(o.y) - 21 - o.age * 4); });
   g.globalAlpha = 1;
 }
 
